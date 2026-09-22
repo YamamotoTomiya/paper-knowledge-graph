@@ -152,7 +152,6 @@ function ViewPane({ active, children }) {
 export default function App() {
   const [view, setView] = useState('map');
   const [centerUrl, setCenterUrl] = useState(DEFAULT_URL);
-  const [tableRequest, setTableRequest] = useState(null);
   const [visited, setVisited] = useState(() => new Set(['map']));
 
   const showView = useCallback((key) => {
@@ -165,25 +164,17 @@ export default function App() {
     showView('graph');
   }, [showView]);
 
-  const showTable = useCallback((filters) => {
-    setTableRequest({ ...filters, nonce: Date.now() });
-    showView('table');
-  }, [showView]);
-
   return (
     <div className="app-shell">
       <Header view={view} setView={showView} />
       <ViewPane active={view === 'map'}>
-        <GlobalMap
-          onSelectTopic={(topic) => showTable({ topic })}
-          onSelectCategory={(category) => showTable({ category })}
-        />
+        <GlobalMap onOpenPaper={openGraph} />
       </ViewPane>
       {visited.has('graph') && (
         <ViewPane active={view === 'graph'}><GraphView centerUrl={centerUrl} setCenterUrl={setCenterUrl} /></ViewPane>
       )}
       {visited.has('table') && (
-        <ViewPane active={view === 'table'}><PaperTable request={tableRequest} onOpenGraph={openGraph} /></ViewPane>
+        <ViewPane active={view === 'table'}><PaperTable onOpenGraph={openGraph} /></ViewPane>
       )}
       {visited.has('stats') && (
         <ViewPane active={view === 'stats'}><StatsView /></ViewPane>

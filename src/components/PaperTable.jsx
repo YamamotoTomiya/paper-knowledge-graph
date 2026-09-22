@@ -3,18 +3,11 @@ import { CATEGORIES, CATEGORY_TEXT_COLORS, PAPER_ENTRIES, TOPICS } from '../data
 
 const PAGE_SIZE = 30;
 
-export default function PaperTable({ request, onOpenGraph }) {
+export default function PaperTable({ onOpenGraph }) {
   const [category, setCategory] = useState('');
   const [topic, setTopic] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    if (!request) return;
-    setCategory(request.category ?? '');
-    setTopic(request.topic ?? '');
-    setPage(0);
-  }, [request]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

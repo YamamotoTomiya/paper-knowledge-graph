@@ -1,47 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { CATEGORY_TEXT_COLORS, CATEGORY_TOPIC_GRAPH, CATEGORIES } from '../data/graph.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, PAPER_GLOBAL_GRAPH, searchPapers } from '../data/graph.js';
 
-const nodeRadius = (size) => Math.max(4, Math.min(46, Math.sqrt(size) * 2.6));
-const linkColor = (link) => `${CATEGORY_TEXT_COLORS[link.source.key ?? link.source] ?? '#94a3b8'}33`;
+// JP_Market_Vis の全体マップ（白い円+業種色の縁、円の大きさ=関係数）を踏襲。
+// ノード=論文（SIMILAR_TOを持つものだけ）、縁の色=カテゴリ、大きさ=SIMILAR_TO本数(degree)。
+const nodeRadius = (degree) => Math.max(2.5, Math.min(22, Math.sqrt(degree) * 4));
+const AVAILABLE_CATEGORIES = Object.keys(CATEGORIES);
+const DEFAULT_MAX_NODES = 1500;
 
-// react-force-graph-2d には円の重なりを避けるcollision forceが標準で無いため、簡易な
-// ペアワイズ反発（O(n^2)だが対象は数十ノードなので問題ない）を自前で追加する。
-function makeCollideForce(nodes, padding = 10) {
-  return (alpha) => {
-    for (let i = 0; i < nodes.length; i += 1) {
-      const a = nodes[i];
-      const ra = nodeRadius(a.size);
-      for (let j = i + 1; j < nodes.length; j += 1) {
-        const b = nodes[j];
-        const rb = nodeRadius(b.size);
-        const dx = (b.x ?? 0) - (a.x ?? 0);
-        const dy = (b.y ?? 0) - (a.y ?? 0);
-        // カテゴリ同士は円が大きく密集しやすいので、余白を大きめに取って重なりを防ぐ
-        const bothCategories = a.kind === 'category' && b.kind === 'category';
-        const minDist = ra + rb + (bothCategories ? padding * 9 : padding);
-        const dist = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        if (dist < minDist) {
-          const strength = ((minDist - dist) / dist) * alpha * 0.6;
-          const ox = dx * strength;
-          const oy = dy * strength;
-          a.vx = (a.vx ?? 0) - ox;
-          a.vy = (a.vy ?? 0) - oy;
-          b.vx = (b.vx ?? 0) + ox;
-          b.vy = (b.vy ?? 0) + oy;
-        }
-      }
-    }
-  };
+function filterGraph(activeCategories, minDegree, maxNodes) {
+  let nodes = PAPER_GLOBAL_GRAPH.nodes.filter(
+    (n) => activeCategories.has(n.category) && n.degree >= minDegree,
+  );
+  const totalMatching = nodes.length;
+  nodes = [...nodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
+  const ids = new Set(nodes.map((n) => n.id));
+  const links = PAPER_GLOBAL_GRAPH.links.filter(
+    (l) => ids.has(l.source.id ?? l.source) && ids.has(l.target.id ?? l.target),
+  );
+  return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length) };
 }
 
-// カテゴリ→トピックの集計マップ。円の大きさ=論文数、色=カテゴリ。
-// クリックでそのカテゴリ/トピックの論文一覧（Table view）へ。
-export default function GlobalMap({ onSelectTopic, onSelectCategory }) {
+export default function GlobalMap({ onOpenPaper }) {
   const fgRef = useRef(null);
   const wrapRef = useRef(null);
+  const hoverRef = useRef(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [hoverNode, setHoverNode] = useState(null);
+  const [activeCategories, setActiveCategories] = useState(new Set(AVAILABLE_CATEGORIES));
+  const [minDegree, setMinDegree] = useState(1);
+  const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
+  const [query, setQuery] = useState('');
+  const results = useMemo(() => (query.trim() ? searchPapers(query, 12) : []), [query]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -52,77 +42,124 @@ export default function GlobalMap({ onSelectTopic, onSelectCategory }) {
     return () => ro.disconnect();
   }, []);
 
-  const data = useMemo(() => ({
-    nodes: CATEGORY_TOPIC_GRAPH.nodes.map((n) => ({ ...n })),
-    links: CATEGORY_TOPIC_GRAPH.links.map((l) => ({ ...l })),
-  }), []);
+  const data = useMemo(
+    () => filterGraph(activeCategories, minDegree, maxNodes),
+    [activeCategories, minDegree, maxNodes],
+  );
 
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.d3Force('charge')?.strength((n) => (n.kind === 'category' ? -900 : -200));
-    // トピックは複数カテゴリにまたがることがあり、その共有リンクがカテゴリ同士を中央へ
-    // 引き寄せてしまう。リンクの力を弱めて反発（charge/collide）を優先させる。
-    fg.d3Force('link')?.distance(90).strength(0.15);
-    fg.d3Force('collide', makeCollideForce(data.nodes));
+    fg.d3Force('charge')?.strength(-30);
+    fg.d3Force('link')?.distance(24).strength(0.4);
   }, [data]);
 
   const onEngineStop = useCallback(() => {
-    fgRef.current?.zoomToFit(400, 40);
+    fgRef.current?.zoomToFit(400, 30);
   }, []);
 
+  const toggleCategory = (key) => setActiveCategories((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
   const drawNode = useCallback((node, ctx, scale) => {
-    const isCategory = node.kind === 'category';
-    const color = CATEGORY_TEXT_COLORS[isCategory ? node.key : node.dominantCategory] ?? '#94a3b8';
-    const r = nodeRadius(node.size) * (node === hoverNode ? 1.15 : 1);
+    const hover = node === hoverRef.current;
+    const color = CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8';
+    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1);
+    if (!hover && r * scale < 1.6) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      return;
+    }
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = isCategory ? color : '#ffffff';
+    ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = isCategory ? 0 : 2;
+    ctx.lineWidth = hover ? 2.5 : 1.4;
     ctx.strokeStyle = color;
-    if (!isCategory) ctx.stroke();
-
-    if (r * scale > 14 || node === hoverNode) {
-      const fontSize = Math.max(9, Math.min(13, r * 0.4)) / scale;
-      ctx.font = `${isCategory ? 700 : 500} ${fontSize}px sans-serif`;
+    ctx.stroke();
+    if (hover) {
+      ctx.font = `600 ${12 / scale}px sans-serif`;
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = isCategory ? '#ffffff' : '#0f172a';
-      const label = isCategory ? node.name : node.name.slice(0, 22);
-      ctx.fillText(label, node.x, node.y);
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#0f172a';
+      const label = node.title.length > 60 ? `${node.title.slice(0, 60)}…` : node.title;
+      const y = node.y - r - 4 / scale;
+      const w = ctx.measureText(label).width + 8 / scale;
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.fillRect(node.x - w / 2, y - 12 / scale, w, 14 / scale);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(label, node.x, y);
     }
-  }, [hoverNode]);
+  }, []);
 
   const paintPointerArea = useCallback((node, color, ctx) => {
-    const r = nodeRadius(node.size) * (node === hoverNode ? 1.15 : 1);
+    const hover = node === hoverRef.current;
+    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1);
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-  }, [hoverNode]);
+  }, []);
 
-  const onNodeClick = useCallback((node) => {
-    if (node.kind === 'topic') onSelectTopic(node.key);
-    else onSelectCategory(node.key);
-  }, [onSelectTopic, onSelectCategory]);
+  const onNodeHover = useCallback((node) => {
+    hoverRef.current = node || null;
+    setHoverNode(node || null);
+  }, []);
+
+  const onNodeClick = useCallback((node) => onOpenPaper(node.id), [onOpenPaper]);
 
   return (
     <div className="map-view">
-      <aside className="map-sidebar" aria-label="全体マップの説明">
+      <aside className="map-sidebar" aria-label="全体マップの説明・検索・フィルタ">
         <h2>論文のつながりを俯瞰する</h2>
-        <p>カテゴリ（大きい円）とトピック（小さい円、自動クラスタリング）の関係を一望できます。円の大きさは論文数。クリックすると論文一覧に絞り込まれます。</p>
+        <p>円1つ=論文1本。白い円の縁の色=カテゴリ、大きさ=類似論文の本数。クリックするとその論文を中心に関係グラフが開きます。</p>
         <div className="map-totals" aria-live="polite">
-          <div><strong>{data.nodes.filter((n) => n.kind === 'category').length}</strong><span>カテゴリ</span></div>
-          <div><strong>{data.nodes.filter((n) => n.kind === 'topic').length}</strong><span>トピック</span></div>
+          <div><strong>{data.nodes.length.toLocaleString()}</strong><span>表示中の論文</span></div>
+          <div><strong>{data.links.length.toLocaleString()}</strong><span>表示中の類似関係</span></div>
         </div>
         <section className="control-section">
+          <label htmlFor="map-search">論文を検索</label>
+          <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {query.trim() && (
+            <div className="search-results" aria-live="polite">
+              {results.map(({ url, paper }) => (
+                <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
+                  <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
+                  <br />{paper.title}
+                </button>
+              ))}
+              {!results.length && <p>該当する論文がありません</p>}
+            </div>
+          )}
+        </section>
+        <section className="control-section">
           <h3>カテゴリ</h3>
-          <div className="legend">
-            {Object.entries(CATEGORIES).map(([key, label]) => (
-              <span key={key}><i style={{ borderColor: CATEGORY_TEXT_COLORS[key] }} />{label}</span>
-            ))}
+          <div className="category-pills">
+            {Object.entries(CATEGORIES).map(([key, label]) => {
+              const active = activeCategories.has(key);
+              const color = CATEGORY_TEXT_COLORS[key];
+              return (
+                <button key={key} aria-pressed={active} onClick={() => toggleCategory(key)}
+                  style={{ color: active ? color : 'var(--text-2)', border: `1px solid ${active ? color : 'var(--border-strong)'}`, background: active ? `${color}14` : 'var(--bg)' }}>
+                  {label}
+                </button>
+              );
+            })}
           </div>
+        </section>
+        <section className="control-section">
+          <label className="range-caption" htmlFor="min-degree">最小類似論文数 <strong>{minDegree}</strong></label>
+          <input id="min-degree" type="range" min="1" max="10" value={minDegree} onChange={(e) => setMinDegree(Number(e.target.value))} />
+        </section>
+        <section className="control-section">
+          <label className="range-caption" htmlFor="max-nodes">表示件数の上限（可視化候補数） <strong>{maxNodes.toLocaleString()}</strong></label>
+          <input id="max-nodes" type="range" min="100" max="10988" step="100" value={maxNodes} onChange={(e) => setMaxNodes(Number(e.target.value))} />
+          <p className="control-note">類似論文数が多い順に上位{maxNodes.toLocaleString()}件だけを描画します（多いほど重くなります）。{data.truncated > 0 && `他 ${data.truncated.toLocaleString()} 件は非表示です。`}</p>
         </section>
       </aside>
       <div ref={wrapRef} className="map-canvas">
@@ -133,23 +170,29 @@ export default function GlobalMap({ onSelectTopic, onSelectCategory }) {
           graphData={data}
           backgroundColor="#ffffff"
           nodeId="id"
-          nodeLabel={(n) => `${n.name} · ${n.size.toLocaleString()}件`}
+          nodeLabel={(n) => `${n.title} · score ${n.score} · 類似論文${n.degree}件`}
           nodeCanvasObject={drawNode}
           nodePointerAreaPaint={paintPointerArea}
-          linkColor={linkColor}
-          linkWidth={(l) => Math.max(0.5, Math.log2(l.count + 1))}
-          onNodeHover={setHoverNode}
+          linkColor={() => 'rgba(148,163,184,0.35)'}
+          linkWidth={0.6}
+          onNodeHover={onNodeHover}
           onNodeClick={onNodeClick}
           onEngineStop={onEngineStop}
-          warmupTicks={80}
-          cooldownTime={5000}
-          minZoom={0.2}
-          maxZoom={8}
+          warmupTicks={30}
+          cooldownTime={3000}
+          minZoom={0.1}
+          maxZoom={16}
         />
+        {!data.nodes.length && (
+          <div className="map-empty" role="status">
+            <strong>表示できる論文がありません</strong>
+            <span>カテゴリを選択するか、最小類似論文数を下げてください。</span>
+          </div>
+        )}
         {hoverNode && (
           <div className="map-hover">
-            <strong>{hoverNode.name}</strong>
-            <small>{hoverNode.size.toLocaleString()} 件の論文</small>
+            <strong>{hoverNode.title}</strong>
+            <small>{CATEGORIES[hoverNode.category] ?? hoverNode.category} · score {hoverNode.score} · 類似論文 {hoverNode.degree}件</small>
           </div>
         )}
       </div>

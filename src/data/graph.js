@@ -76,57 +76,26 @@ export function degreeOf(ref) {
   return neighborsOf(ref).length;
 }
 
-// トピックごとの論文一覧・カテゴリごとの論文一覧（一覧・フィルタ用）
-export const PAPERS_BY_TOPIC = new Map();
-export const PAPERS_BY_CATEGORY = new Map();
 export const PAPER_ENTRIES = Object.entries(PAPERS).map(([url, p]) => ({ url, ...p }));
-for (const p of PAPER_ENTRIES) {
-  if (p.topic_id) {
-    if (!PAPERS_BY_TOPIC.has(p.topic_id)) PAPERS_BY_TOPIC.set(p.topic_id, []);
-    PAPERS_BY_TOPIC.get(p.topic_id).push(p.url);
-  }
-  const cat = p.category || 'uncategorized';
-  if (!PAPERS_BY_CATEGORY.has(cat)) PAPERS_BY_CATEGORY.set(cat, []);
-  PAPERS_BY_CATEGORY.get(cat).push(p.url);
-}
 
-// カテゴリ→トピックの集計グラフ（全体マップ用）。トピックの「主カテゴリ」は所属論文最多のカテゴリ。
-export const CATEGORY_TOPIC_GRAPH = (() => {
-  const pairCount = new Map(); // "cat|topic" -> count
-  const topicCatCount = new Map(); // topic -> Map(cat->count)
-  for (const p of PAPER_ENTRIES) {
-    if (!p.topic_id) continue;
-    const cat = p.category || 'uncategorized';
-    const key = `${cat}|${p.topic_id}`;
-    pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
-    if (!topicCatCount.has(p.topic_id)) topicCatCount.set(p.topic_id, new Map());
-    const m = topicCatCount.get(p.topic_id);
-    m.set(cat, (m.get(cat) ?? 0) + 1);
-  }
-  const topicDominantCat = new Map();
-  for (const [topicId, m] of topicCatCount) {
-    let best = null, bestN = -1;
-    for (const [cat, n] of m) if (n > bestN) { best = cat; bestN = n; }
-    topicDominantCat.set(topicId, best);
+// 論文レベルの全体マップ用グラフ（JP_Market_Vis の GLOBAL_GRAPH と同じ考え方: 同種ノード同士
+// ＝論文同士のSIMILAR_TOだけで構成し、ノードの大きさ＝そのpaperのSIMILAR_TO本数(degree)）。
+// Concept/Method/Representationとの関係は関係グラフ（エゴネットワーク）側で見せるため含めない。
+export const PAPER_GLOBAL_GRAPH = (() => {
+  const degree = new Map();
+  const links = [];
+  for (const rel of RELATIONS) {
+    if (rel.type !== 'SIMILAR_TO') continue;
+    const s = rel.source.key, t = rel.target.key;
+    degree.set(s, (degree.get(s) ?? 0) + 1);
+    degree.set(t, (degree.get(t) ?? 0) + 1);
+    links.push({ source: s, target: t, score: rel.score });
   }
   const nodes = [];
-  for (const [name, label] of Object.entries(CATEGORIES)) {
-    const total = PAPERS_BY_CATEGORY.get(name)?.length ?? 0;
-    if (total === 0) continue;
-    nodes.push({ id: `category:${name}`, kind: 'category', key: name, name: label, size: total });
-  }
-  for (const [topicId, info] of Object.entries(TOPICS)) {
-    const total = PAPERS_BY_TOPIC.get(topicId)?.length ?? 0;
-    if (total === 0) continue;
-    nodes.push({
-      id: `topic:${topicId}`, kind: 'topic', key: topicId, name: info.label, size: total,
-      dominantCategory: topicDominantCat.get(topicId) ?? 'uncategorized',
-    });
-  }
-  const links = [];
-  for (const [key, count] of pairCount) {
-    const [cat, topicId] = key.split('|');
-    links.push({ source: `category:${cat}`, target: `topic:${topicId}`, count });
+  for (const [url, d] of degree) {
+    const p = PAPERS[url];
+    if (!p) continue;
+    nodes.push({ id: url, title: p.title, category: p.category || 'uncategorized', score: p.score, degree: d });
   }
   return { nodes, links };
 })();
