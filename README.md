@@ -2,7 +2,7 @@
 
 AI・材料科学・量子計算などの分野で日次収集・評価している論文を、カテゴリ・トピック・概念（Concept/Method/Representation）でつないだ、ブラウザで探索できるナレッジグラフです。
 
-**公開ページ: https://\<owner\>.github.io/paper-knowledge-graph/**
+**公開ページ: https://yamamototomiya.github.io/paper-knowledge-graph/**
 
 [JP_Market_Vis](https://github.com/mattyamonaca/JP_Market_Vis)（日本の上場企業マップ）の構成を参考に、Neo4j等のサーバーを使わず、静的JSON + React（Vite）だけで動く構成にしています。
 
