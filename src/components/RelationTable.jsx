@@ -99,11 +99,9 @@ export default function RelationTable({ onOpenPaper }) {
                       <span className="pill" style={{ color, background: `${color}14` }}>{RELATION_TYPE_JA[rel.type] ?? rel.type}</span>
                     </td>
                     <td>
-                      {rel.target.kind === 'paper' ? (
-                        <button className="link-cell" onClick={(e) => { e.stopPropagation(); onOpenPaper?.(rel.target.key); }}>
-                          {nodeName(rel.target)}
-                        </button>
-                      ) : nodeName(rel.target)}
+                      <button className="link-cell" onClick={(e) => { e.stopPropagation(); onOpenPaper?.(rel.target.kind === 'paper' ? rel.target.key : rel.target); }}>
+                        {nodeName(rel.target)}
+                      </button>
                     </td>
                     <td>{scoreVal != null ? scoreVal.toFixed(3) : '—'}{rel.rescued && ' (救済)'}</td>
                   </tr>

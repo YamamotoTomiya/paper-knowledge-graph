@@ -29,10 +29,12 @@ function BaseNode({ children, style, dimmed }) {
 }
 
 function CenterNode({ data }) {
-  const color = CATEGORY_TEXT_COLORS[data.category] ?? '#0f172a';
+  const isPaper = data.kind === 'paper';
+  const color = isPaper ? (CATEGORY_TEXT_COLORS[data.category] ?? '#0f172a') : '#0f172a';
+  const kindLabel = isPaper ? 'この論文' : `この${ENTITY_LABELS[data.kind] ?? data.kind}`;
   return (
     <BaseNode style={{ border: `2px solid ${color}`, fontWeight: 700, maxWidth: 260 }}>
-      <div style={{ color, fontSize: 10, fontWeight: 600, marginBottom: 2 }}>この論文</div>
+      <div style={{ color, fontSize: 10, fontWeight: 600, marginBottom: 2 }}>{kindLabel}</div>
       <div>{data.label}</div>
       {data.score != null && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>score {data.score}</div>}
     </BaseNode>

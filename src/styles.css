@@ -230,6 +230,7 @@ input[type="range"] { width: 100%; }
 .back-bar { top: 12px; right: 12px; }
 .truncated-note { bottom: 12px; left: 12px; color: var(--text-2); }
 .graph-caption { top: 12px; left: 12px; color: var(--text-2); max-width: 320px; }
+.graph-settings { top: 52px; right: 12px; width: 180px; }
 .btn {
   display: inline-block;
   border: 1px solid var(--border-strong);

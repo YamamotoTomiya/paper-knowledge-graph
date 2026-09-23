@@ -1,8 +1,11 @@
-// 選択論文のエゴネットワークをReact Flowのnodes/edgesに変換する。
-// 1ホップ（類似論文 + Concept/Method/Representation）に加えて、直接の類似論文がさらに
-// 持つ類似論文（2ホップ、間接）も少数だけ取り込む。中心1本だけの「星型」だと対象論文にしか
-// 繋がりが見えず他の論文同士の繋がりが分からないため（見にくい・他の論文が見えない、という
+// 選択ノード（論文 または Concept/Method/Representation）のエゴネットワークを
+// React Flowのnodes/edgesに変換する。中心が論文の場合は、1ホップ（類似論文 +
+// Concept/Method/Representation）に加えて、直接の類似論文がさらに持つ類似論文
+// （2ホップ、間接）も少数取り込む。中心1本だけの「星型」だと対象論文にしか繋がりが
+// 見えず他の論文同士の繋がりが分からないため（見にくい・他の論文が見えない、という
 // フィードバックを踏まえた変更）、間接ノードはその親（直接の隣接論文）に繋げて描画する。
+// 中心がConcept/Method/Representationの場合は、それを扱う論文だけを1ホップで表示する
+// （間接展開は論文間の類似度に特有の考え方なので中心が論文の時のみ行う）。
 // 種別ごとにセクターへ分け、リング状に配置する
 // （JP_Market_Vis の src/flow/egoNetwork.js のセクター配置を簡略化したもの）。
 import { RELATION_TYPE_JA, degreeOf, neighborsOf, nodeInfo, nodeKey, nodeName } from '../data/graph.js';
@@ -19,8 +22,7 @@ const BASE_RADIUS = 260;
 const RING_GAP = 150;
 const NODE_ARC = 130;
 const SECTOR_GAP = 0.14;
-const INDIRECT_PER_PARENT = 3;
-const MAX_INDIRECT = 15;
+const INDIRECT_PER_PARENT = 5;
 
 function layoutSector(members, angleStart, span, positions) {
   let placed = 0;
@@ -42,10 +44,10 @@ function layoutSector(members, angleStart, span, positions) {
 
 // 直接の類似論文それぞれについて、そのさらに類似論文（中心や既存の隣接ノードと重複しないもの）を
 // 少数だけ拾う。関係グラフ上では「親（直接隣接論文）」に繋げて表示する間接ノードとして返す。
-function collectIndirectPapers(centerKey, directPapers, existingKeys) {
+function collectIndirectPapers(centerKey, directPapers, existingKeys, maxIndirect) {
   const indirect = new Map(); // key -> { key, ref, relations:[relation], primaryType, indirect, parentKey }
   for (const parent of directPapers) {
-    if (indirect.size >= MAX_INDIRECT) break;
+    if (indirect.size >= maxIndirect) break;
     const grandNeighbors = neighborsOf(parent.ref)
       .filter((l) => l.other.kind === 'paper')
       .map((l) => ({ key: nodeKey(l.other), ref: l.other, relation: l.relation }))
@@ -53,7 +55,7 @@ function collectIndirectPapers(centerKey, directPapers, existingKeys) {
       .sort((a, b) => (b.relation.score ?? 0) - (a.relation.score ?? 0))
       .slice(0, INDIRECT_PER_PARENT);
     for (const c of grandNeighbors) {
-      if (indirect.size >= MAX_INDIRECT) break;
+      if (indirect.size >= maxIndirect) break;
       indirect.set(c.key, {
         key: c.key,
         ref: c.ref,
@@ -67,11 +69,12 @@ function collectIndirectPapers(centerKey, directPapers, existingKeys) {
   return [...indirect.values()];
 }
 
-export function buildEgoNetwork(paperUrl, { maxNeighbors = 70 } = {}) {
-  const centerRef = { kind: 'paper', key: paperUrl };
+// centerRef: {kind:'paper', key:url} または {kind:'concept'|'method'|'representation', key:normalized_name}
+export function buildEgoNetwork(centerRef, { maxNeighbors = 100 } = {}) {
   const center = nodeInfo(centerRef);
   if (!center) return { nodes: [], edges: [], truncated: 0 };
   const centerKey = nodeKey(centerRef);
+  const isPaperCenter = centerRef.kind === 'paper';
 
   const links = neighborsOf(centerRef);
   const neighborMap = new Map();
@@ -85,8 +88,14 @@ export function buildEgoNetwork(paperUrl, { maxNeighbors = 70 } = {}) {
     nb.primaryType = nb.relations[0].type;
   }
 
-  const directPapers = [...neighborMap.values()].filter((nb) => nb.ref.kind === 'paper');
-  const indirectPapers = collectIndirectPapers(centerKey, directPapers, new Set(neighborMap.keys()));
+  // 間接展開（2ホップ）は論文間の類似度に特有の考え方なので、中心が論文の時だけ行う。
+  // 可視化候補数（maxNeighbors）が増えたらその分間接ノードの上限も緩める。
+  let indirectPapers = [];
+  if (isPaperCenter) {
+    const directPapers = [...neighborMap.values()].filter((nb) => nb.ref.kind === 'paper');
+    const maxIndirect = Math.max(15, Math.round(maxNeighbors * 0.3));
+    indirectPapers = collectIndirectPapers(centerKey, directPapers, new Set(neighborMap.keys()), maxIndirect);
+  }
 
   let neighbors = [...neighborMap.values(), ...indirectPapers];
   const totalNeighbors = neighbors.length;
@@ -136,7 +145,13 @@ export function buildEgoNetwork(paperUrl, { maxNeighbors = 70 } = {}) {
       id: centerKey,
       type: 'center',
       position: { x: 0, y: 0 },
-      data: { label: center.title, score: center.score, category: center.category, ref: centerRef },
+      data: {
+        label: isPaperCenter ? center.title : center.name,
+        kind: centerRef.kind,
+        score: isPaperCenter ? center.score : null,
+        category: isPaperCenter ? center.category : null,
+        ref: centerRef,
+      },
     },
     ...neighbors.map((nb) => {
       const info = nodeInfo(nb.ref);

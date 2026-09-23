@@ -1,7 +1,7 @@
 import React from 'react';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, RELATION_TYPE_JA, degreeOf } from '../data/graph.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, RELATION_TYPE_JA, degreeOf, nodeKey } from '../data/graph.js';
 
-function PaperDetail({ url, paper, isCenter, onCenterPaper }) {
+function PaperDetail({ url, paper, isCenter, onCenterNode }) {
   const color = CATEGORY_TEXT_COLORS[paper.category] ?? '#475569';
   return (
     <>
@@ -32,15 +32,15 @@ function PaperDetail({ url, paper, isCenter, onCenterPaper }) {
       </section>
       <div className="detail-actions">
         <a className="btn" href={url} target="_blank" rel="noreferrer">論文を開く ↗</a>
-        {!isCenter && onCenterPaper && (
-          <button className="btn" onClick={() => onCenterPaper(url)}>この論文を中心に表示</button>
+        {!isCenter && onCenterNode && (
+          <button className="btn" onClick={() => onCenterNode({ kind: 'paper', key: url })}>この論文を中心に表示</button>
         )}
       </div>
     </>
   );
 }
 
-function EntityDetail({ kind, name, entity }) {
+function EntityDetail({ kind, name, entity, isCenter, onCenterNode }) {
   return (
     <>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>
@@ -54,6 +54,13 @@ function EntityDetail({ kind, name, entity }) {
         </section>
       )}
       <p className="detail-meta"><span>{degreeOf({ kind, key: name })} 件の論文と接続</span></p>
+      {!isCenter && onCenterNode && (
+        <div className="detail-actions">
+          <button className="btn" onClick={() => onCenterNode({ kind, key: name })}>
+            この{ENTITY_LABELS[kind] ?? kind}を中心に関係グラフを表示
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -70,7 +77,7 @@ function EdgeDetail({ relation }) {
   );
 }
 
-export default function DetailPanel({ selection, centerUrl, onClose, onCenterPaper }) {
+export default function DetailPanel({ selection, centerKey, onClose, onCenterNode }) {
   return (
     <aside className="detail-panel" aria-label="詳細パネル">
       {!selection && <p className="detail-empty">ノードをクリックすると詳細が表示されます。</p>}
@@ -81,12 +88,18 @@ export default function DetailPanel({ selection, centerUrl, onClose, onCenterPap
             <PaperDetail
               url={selection.ref.key}
               paper={selection.info}
-              isCenter={selection.ref.key === centerUrl}
-              onCenterPaper={onCenterPaper}
+              isCenter={nodeKey(selection.ref) === centerKey}
+              onCenterNode={onCenterNode}
             />
           )}
           {selection.kind === 'node' && selection.ref.kind !== 'paper' && (
-            <EntityDetail kind={selection.ref.kind} name={selection.ref.key} entity={selection.info} />
+            <EntityDetail
+              kind={selection.ref.kind}
+              name={selection.ref.key}
+              entity={selection.info}
+              isCenter={nodeKey(selection.ref) === centerKey}
+              onCenterNode={onCenterNode}
+            />
           )}
           {selection.kind === 'edge' && <EdgeDetail relation={selection.relation} />}
         </>

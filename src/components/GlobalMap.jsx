@@ -51,14 +51,14 @@ function addEntityContext(paperNodes, budget) {
       if (nb.other.kind === 'paper') continue;
       const id = nodeKey(nb.other);
       entityCount.set(id, (entityCount.get(id) ?? 0) + 1);
-      if (!entityInfo.has(id)) entityInfo.set(id, { kind: nb.other.kind, title: nodeName(nb.other) });
+      if (!entityInfo.has(id)) entityInfo.set(id, { kind: nb.other.kind, title: nodeName(nb.other), ref: nb.other });
     }
   }
   const topIds = new Set(
     [...entityCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, budget).map(([id]) => id),
   );
   const entityNodes = [...topIds].map((id) => ({
-    id, kind: entityInfo.get(id).kind, title: entityInfo.get(id).title, degree: entityCount.get(id),
+    id, kind: entityInfo.get(id).kind, title: entityInfo.get(id).title, ref: entityInfo.get(id).ref, degree: entityCount.get(id),
   }));
   const entityLinks = [];
   for (const p of paperNodes) {
@@ -126,7 +126,7 @@ function buildSearchGraph(query, maxNodes) {
     for (const nb of entityNbs) {
       const id = nodeKey(nb.other);
       if (!nodeMap.has(id)) {
-        nodeMap.set(id, { id, kind: nb.other.kind, title: nodeName(nb.other), degree: 1, matched: true });
+        nodeMap.set(id, { id, kind: nb.other.kind, title: nodeName(nb.other), ref: nb.other, degree: 1, matched: true });
       } else {
         nodeMap.get(id).degree += 1;
       }
@@ -305,13 +305,14 @@ export default function GlobalMap({ onOpenPaper }) {
   }, []);
 
   // シングルクリック=つながっているノードだけ強調表示（選択のトグル）。
-  // ダブルクリック（同じノードを400ms以内に再クリック）=論文ならその論文を中心に関係グラフを開く。
+  // ダブルクリック（同じノードを400ms以内に再クリック）=そのノード（論文でもConcept/Method/
+  // Representationでも）を中心に関係グラフを開く。
   const onNodeClick = useCallback((node) => {
     const now = Date.now();
     const isDoubleClick = lastClickRef.current.id === node.id && now - lastClickRef.current.time < 400;
     lastClickRef.current = { id: node.id, time: now };
     if (isDoubleClick) {
-      if (node.kind === 'paper') onOpenPaper(node.id);
+      onOpenPaper(node.kind === 'paper' ? node.id : node.ref);
       return;
     }
     setSelectedId((prev) => (prev === node.id ? null : node.id));

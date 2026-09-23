@@ -13,6 +13,13 @@ import StatsView from './components/StatsView.jsx';
 import GlobalMap from './components/GlobalMap.jsx';
 
 const DEFAULT_URL = [...PAPER_ENTRIES].sort((a, b) => b.score - a.score)[0]?.url ?? null;
+const DEFAULT_MAX_NEIGHBORS = 100;
+
+// GlobalMap/PaperTable/RelationTable/StatsViewは従来どおり論文URL文字列を渡してくる呼び出しが
+// 大半なので、それらを {kind:'paper', key:url} に正規化する（{kind,key}のrefはそのまま通す）。
+function toRef(refOrUrl) {
+  return typeof refOrUrl === 'string' ? { kind: 'paper', key: refOrUrl } : refOrUrl;
+}
 
 function Header({ view, setView }) {
   return (
@@ -42,10 +49,12 @@ function Header({ view, setView }) {
 
 function BackBar({ history, onBack }) {
   if (history.length === 0) return null;
-  const prevInfo = nodeInfo({ kind: 'paper', key: history[history.length - 1] });
+  const prevRef = history[history.length - 1];
+  const prevInfo = nodeInfo(prevRef);
+  const label = prevRef.kind === 'paper' ? prevInfo?.title : prevInfo?.name;
   return (
     <div className="overlay-box back-bar">
-      <button className="btn" onClick={onBack}>← {prevInfo?.title ?? '戻る'}</button>
+      <button className="btn" onClick={onBack}>← {label ?? '戻る'}</button>
     </div>
   );
 }
@@ -54,11 +63,12 @@ function BackBar({ history, onBack }) {
 // 隣接数の多いノード（中心など）で全ラベルを出すと重なって読めなくなるため。
 const HOVER_LABEL_MAX_EDGES = 8;
 
-function GraphView({ centerUrl, setCenterUrl }) {
+function GraphView({ centerRef, setCenterRef }) {
   const [selection, setSelection] = useState(null);
   const [history, setHistory] = useState([]);
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState(null);
+  const [maxNeighbors, setMaxNeighbors] = useState(DEFAULT_MAX_NEIGHBORS);
   // React Flowが計測したノードの実サイズ。ノード配列は毎回作り直すので、計測結果を自分で
   // 保持して渡さないとReact Flowが「サイズ未確定」を繰り返し検出し、エッジの接続点が
   // 定まらず点滅して見える（JP_Market_Vis App.jsx の GraphView と同じ対策）。
@@ -71,7 +81,11 @@ function GraphView({ centerUrl, setCenterUrl }) {
     });
   }, []);
 
-  const { nodes, edges, truncated } = useMemo(() => buildEgoNetwork(centerUrl), [centerUrl]);
+  const centerKey = nodeKey(centerRef);
+  const { nodes, edges, truncated } = useMemo(
+    () => buildEgoNetwork(centerRef, { maxNeighbors }),
+    [centerRef, maxNeighbors],
+  );
 
   // ホバー中のノードがあればそれを、無ければ「クリックして選んだノード」を強調対象にする。
   // これによりクリックした後マウスを離してもハイライトが残り、詳細パネルを読みながら
@@ -133,16 +147,17 @@ function GraphView({ centerUrl, setCenterUrl }) {
     setSelection({ kind: 'node', ref: node.data.ref, info: nodeInfo(node.data.ref) });
   }, []);
 
-  const recenterOn = useCallback((url) => {
-    if (url === centerUrl) return;
-    setHistory((h) => [...h, centerUrl]);
-    setCenterUrl(url);
+  const recenterOn = useCallback((ref) => {
+    if (nodeKey(ref) === centerKey) return;
+    setHistory((h) => [...h, centerRef]);
+    setCenterRef(ref);
     setSelection(null);
-  }, [centerUrl, setCenterUrl]);
+  }, [centerKey, centerRef, setCenterRef]);
 
+  // ダブルクリックはノード種別を問わず、いま表示中のどのノード（論文でもConcept/Method/
+  // Representationでも）を中心にした関係グラフにも切り替えられるようにする。
   const onNodeDoubleClick = useCallback((_, node) => {
-    const ref = node.data.ref;
-    if (ref.kind === 'paper') recenterOn(ref.key);
+    recenterOn(node.data.ref);
   }, [recenterOn]);
 
   const onEdgeClick = useCallback((_, edge) => setSelection({ kind: 'edge', relation: edge.data.relation }), []);
@@ -155,37 +170,44 @@ function GraphView({ centerUrl, setCenterUrl }) {
     setHistory((h) => {
       if (h.length === 0) return h;
       const prev = h[h.length - 1];
-      setCenterUrl(prev);
+      setCenterRef(prev);
       setSelection(null);
       return h.slice(0, -1);
     });
-  }, [setCenterUrl]);
+  }, [setCenterRef]);
 
   const handleSidebarSelect = useCallback((url) => {
-    if (url !== centerUrl) {
+    const ref = { kind: 'paper', key: url };
+    if (nodeKey(ref) !== centerKey) {
       setHistory([]);
-      setCenterUrl(url);
+      setCenterRef(ref);
       setSelection(null);
     }
-  }, [centerUrl, setCenterUrl]);
+  }, [centerKey, setCenterRef]);
 
-  if (!centerUrl) return <p className="detail-empty">論文がありません。</p>;
+  if (!centerRef) return <p className="detail-empty">論文がありません。</p>;
 
   return (
     <div className="graph-view">
-      <SearchSidebar selectedUrl={centerUrl} onSelect={handleSidebarSelect} />
+      <SearchSidebar selectedUrl={centerRef.kind === 'paper' ? centerRef.key : null} onSelect={handleSidebarSelect} />
       <div className="ego-canvas">
         <div className="overlay-box graph-caption">
-          点線=類似論文のさらに類似論文（間接）。クリックで詳細表示とつながりの強調、ダブルクリックでその論文を中心に表示します。
+          点線=類似論文のさらに類似論文（間接）。クリックで詳細表示とつながりの強調、ダブルクリックでそのノードを中心に表示します。
+          論文だけでなくConcept/Method/Representationも中心にできます。
         </div>
         <BackBar history={history} onBack={onBack} />
+        <div className="overlay-box graph-settings">
+          <label className="range-caption" htmlFor="max-neighbors">可視化候補数 <strong>{maxNeighbors}</strong></label>
+          <input id="max-neighbors" type="range" min="20" max="400" step="10" value={maxNeighbors}
+            onChange={(e) => setMaxNeighbors(Number(e.target.value))} />
+        </div>
         {truncated > 0 && (
           <div className="overlay-box truncated-note">
             関連が多いため {truncated} 件を省略表示中（種別ごとに比例配分）。
           </div>
         )}
         <ReactFlow
-          key={centerUrl}
+          key={centerKey}
           nodes={displayNodes}
           edges={displayEdges}
           nodeTypes={nodeTypes}
@@ -213,7 +235,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
           />
         </ReactFlow>
       </div>
-      <DetailPanel selection={selection} centerUrl={centerUrl} onClose={() => setSelection(null)} onCenterPaper={recenterOn} />
+      <DetailPanel selection={selection} centerKey={centerKey} onClose={() => setSelection(null)} onCenterNode={recenterOn} />
     </div>
   );
 }
@@ -228,7 +250,7 @@ function ViewPane({ active, children }) {
 
 export default function App() {
   const [view, setView] = useState('map');
-  const [centerUrl, setCenterUrl] = useState(DEFAULT_URL);
+  const [centerRef, setCenterRef] = useState(() => ({ kind: 'paper', key: DEFAULT_URL }));
   const [visited, setVisited] = useState(() => new Set(['map']));
 
   const showView = useCallback((key) => {
@@ -236,8 +258,10 @@ export default function App() {
     setView(key);
   }, []);
 
-  const openGraph = useCallback((url) => {
-    setCenterUrl(url);
+  // 論文URL文字列（GlobalMap/PaperTable/RelationTable/StatsViewの既存呼び出し）、
+  // {kind,key}のref（Concept/Method/Representationを中心にする場合）のどちらも受け付ける。
+  const openGraph = useCallback((refOrUrl) => {
+    setCenterRef(toRef(refOrUrl));
     showView('graph');
   }, [showView]);
 
@@ -248,7 +272,7 @@ export default function App() {
         <GlobalMap onOpenPaper={openGraph} />
       </ViewPane>
       {visited.has('graph') && (
-        <ViewPane active={view === 'graph'}><GraphView centerUrl={centerUrl} setCenterUrl={setCenterUrl} /></ViewPane>
+        <ViewPane active={view === 'graph'}><GraphView centerRef={centerRef} setCenterRef={setCenterRef} /></ViewPane>
       )}
       {visited.has('table') && (
         <ViewPane active={view === 'table'}><PaperTable onOpenGraph={openGraph} /></ViewPane>
