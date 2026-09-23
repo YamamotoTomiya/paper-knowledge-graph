@@ -158,6 +158,8 @@ export default function GlobalMap({ onOpenPaper }) {
   const hoverRef = useRef(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [hoverNode, setHoverNode] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const lastClickRef = useRef({ id: null, time: 0 });
   const [activeCategories, setActiveCategories] = useState(new Set(AVAILABLE_CATEGORIES));
   const [minDegree, setMinDegree] = useState(1);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
@@ -189,6 +191,20 @@ export default function GlobalMap({ onOpenPaper }) {
     [isSearching, debouncedQuery, debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities],
   );
 
+  // 選択中ノードに直接つながるノードだけの集合（他を減光するため）。データが変わったら選択解除。
+  useEffect(() => { setSelectedId(null); }, [data]);
+  const connectedIds = useMemo(() => {
+    if (!selectedId) return null;
+    const set = new Set([selectedId]);
+    for (const l of data.links) {
+      const s = l.source.id ?? l.source;
+      const t = l.target.id ?? l.target;
+      if (s === selectedId) set.add(t);
+      else if (t === selectedId) set.add(s);
+    }
+    return set;
+  }, [selectedId, data]);
+
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
@@ -219,35 +235,42 @@ export default function GlobalMap({ onOpenPaper }) {
     const hover = node === hoverRef.current;
     const geo = nodeGeometry(node, hover);
     const color = geo.color;
+    // 選択中ノードがあれば、直接つながらないノードを大きく減光する
+    const dimmed = connectedIds && !connectedIds.has(node.id);
+    const emphasized = connectedIds && node.id === selectedId;
 
     if (geo.isEntity) {
       // Concept/Method/Representation は論文（円）と区別するため正方形で描く
+      ctx.globalAlpha = dimmed ? 0.12 : 1;
       ctx.fillStyle = color;
       ctx.fillRect(node.x - geo.s / 2, node.y - geo.s / 2, geo.s, geo.s);
-      if (hover) drawHoverLabel(ctx, node, geo.s / 2 + 4 / scale, scale, `${ENTITY_LABELS[node.kind] ?? node.kind}: ${node.title}`);
+      ctx.globalAlpha = 1;
+      if (hover || emphasized) drawHoverLabel(ctx, node, geo.s / 2 + 4 / scale, scale, `${ENTITY_LABELS[node.kind] ?? node.kind}: ${node.title}`);
       return;
     }
 
     const isContextOnly = isSearching && node.matched === false;
     const r = geo.r;
-    if (!hover && r * scale < 1.6) {
+    if (!hover && !emphasized && r * scale < 1.6) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
+      ctx.globalAlpha = dimmed ? 0.12 : 1;
       ctx.fill();
+      ctx.globalAlpha = 1;
       return;
     }
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     ctx.fillStyle = isSearching && node.matched ? color : '#ffffff';
-    ctx.globalAlpha = isContextOnly ? 0.5 : 1;
+    ctx.globalAlpha = dimmed ? 0.12 : (isContextOnly ? 0.5 : 1);
     ctx.fill();
-    ctx.lineWidth = hover ? 2.5 : 1.4;
+    ctx.lineWidth = hover || emphasized ? 2.5 : 1.4;
     ctx.strokeStyle = color;
     ctx.stroke();
     ctx.globalAlpha = 1;
-    if (hover) drawHoverLabel(ctx, node, r + 4 / scale, scale, node.title);
-  }, [isSearching, nodeGeometry]);
+    if (hover || emphasized) drawHoverLabel(ctx, node, r + 4 / scale, scale, node.title);
+  }, [isSearching, nodeGeometry, connectedIds, selectedId]);
 
   const paintPointerArea = useCallback((node, color, ctx) => {
     const hover = node === hoverRef.current;
@@ -267,15 +290,32 @@ export default function GlobalMap({ onOpenPaper }) {
     setHoverNode(node || null);
   }, []);
 
+  // シングルクリック=つながっているノードだけ強調表示（選択のトグル）。
+  // ダブルクリック（同じノードを400ms以内に再クリック）=論文ならその論文を中心に関係グラフを開く。
   const onNodeClick = useCallback((node) => {
-    if (node.kind === 'paper') onOpenPaper(node.id);
+    const now = Date.now();
+    const isDoubleClick = lastClickRef.current.id === node.id && now - lastClickRef.current.time < 400;
+    lastClickRef.current = { id: node.id, time: now };
+    if (isDoubleClick) {
+      if (node.kind === 'paper') onOpenPaper(node.id);
+      return;
+    }
+    setSelectedId((prev) => (prev === node.id ? null : node.id));
   }, [onOpenPaper]);
+
+  const onBackgroundClick = useCallback(() => setSelectedId(null), []);
 
   return (
     <div className="map-view">
       <aside className="map-sidebar" aria-label="全体マップの説明・検索・フィルタ">
         <h2>論文のつながりを俯瞰する</h2>
-        <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。論文をクリックするとその論文を中心に関係グラフが開きます。</p>
+        <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。クリックでつながっているノードだけ強調表示、ダブルクリックでその論文を中心に関係グラフを開きます。</p>
+        {selectedId && (
+          <p className="control-note">
+            選択中: {data.nodes.find((n) => n.id === selectedId)?.title ?? selectedId}
+            <button className="btn" style={{ marginLeft: 8, padding: '2px 8px' }} onClick={() => setSelectedId(null)}>選択解除</button>
+          </p>
+        )}
         <div className="map-totals" aria-live="polite">
           <div><strong>{data.nodes.filter((n) => n.kind === 'paper').length.toLocaleString()}</strong><span>表示中の論文</span></div>
           <div><strong>{data.links.length.toLocaleString()}</strong><span>表示中の関係</span></div>
@@ -372,10 +412,23 @@ export default function GlobalMap({ onOpenPaper }) {
             : `${ENTITY_LABELS[n.kind] ?? n.kind}: ${n.title}`)}
           nodeCanvasObject={drawNode}
           nodePointerAreaPaint={paintPointerArea}
-          linkColor={(l) => (l.kind === 'entity' ? `${ENTITY_COLOR[l.entityKind] ?? '#94a3b8'}55` : 'rgba(148,163,184,0.35)')}
-          linkWidth={(l) => (l.kind === 'entity' ? 0.8 : 0.6)}
+          linkColor={(l) => {
+            const s = l.source.id ?? l.source;
+            const t = l.target.id ?? l.target;
+            const touches = selectedId && (s === selectedId || t === selectedId);
+            if (selectedId) return touches ? '#0369a1cc' : 'rgba(148,163,184,0.04)';
+            return l.kind === 'entity' ? `${ENTITY_COLOR[l.entityKind] ?? '#94a3b8'}55` : 'rgba(148,163,184,0.35)';
+          }}
+          linkWidth={(l) => {
+            const s = l.source.id ?? l.source;
+            const t = l.target.id ?? l.target;
+            const touches = selectedId && (s === selectedId || t === selectedId);
+            if (touches) return 2;
+            return l.kind === 'entity' ? 0.8 : 0.6;
+          }}
           onNodeHover={onNodeHover}
           onNodeClick={onNodeClick}
+          onBackgroundClick={onBackgroundClick}
           onEngineStop={onEngineStop}
           warmupTicks={30}
           cooldownTime={3000}

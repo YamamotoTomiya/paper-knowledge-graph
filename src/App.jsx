@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Background, Controls, MiniMap, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { CATEGORY_TEXT_COLORS, PAPER_ENTRIES, STATS, nodeInfo } from './data/graph.js';
+import { CATEGORY_TEXT_COLORS, PAPER_ENTRIES, STATS, nodeInfo, nodeKey } from './data/graph.js';
 import { buildEgoNetwork } from './flow/egoNetwork.js';
 import { nodeTypes } from './flow/nodeTypes.jsx';
 import SearchSidebar from './components/SearchSidebar.jsx';
@@ -73,38 +73,44 @@ function GraphView({ centerUrl, setCenterUrl }) {
 
   const { nodes, edges, truncated } = useMemo(() => buildEgoNetwork(centerUrl), [centerUrl]);
 
+  // ホバー中のノードがあればそれを、無ければ「クリックして選んだノード」を強調対象にする。
+  // これによりクリックした後マウスを離してもハイライトが残り、詳細パネルを読みながら
+  // どのノードの繋がりか確認できる（ホバーだけだとマウスを動かすと消えてしまうため）。
+  const selectedNodeId = selection?.kind === 'node' ? nodeKey(selection.ref) : null;
+  const highlightNodeId = hoveredNodeId ?? selectedNodeId;
+
   const displayNodes = useMemo(() => {
-    const connected = new Set([hoveredNodeId]);
-    if (hoveredNodeId) {
+    const connected = new Set([highlightNodeId]);
+    if (highlightNodeId) {
       for (const e of edges) {
-        if (e.source === hoveredNodeId) connected.add(e.target);
-        if (e.target === hoveredNodeId) connected.add(e.source);
+        if (e.source === highlightNodeId) connected.add(e.target);
+        if (e.target === highlightNodeId) connected.add(e.source);
       }
     }
     return nodes.map((n) => ({
       ...n,
       measured: measured[n.id],
-      data: { ...n.data, dimmed: hoveredNodeId ? !connected.has(n.id) : false },
+      data: { ...n.data, dimmed: highlightNodeId ? !connected.has(n.id) : false },
     }));
-  }, [nodes, edges, hoveredNodeId, measured]);
+  }, [nodes, edges, highlightNodeId, measured]);
 
-  // ホバー中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
+  // 強調中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
   const hoverNodeEdgeCount = useMemo(
-    () => (hoveredNodeId ? edges.filter((e) => e.source === hoveredNodeId || e.target === hoveredNodeId).length : 0),
-    [edges, hoveredNodeId],
+    () => (highlightNodeId ? edges.filter((e) => e.source === highlightNodeId || e.target === highlightNodeId).length : 0),
+    [edges, highlightNodeId],
   );
 
-  // 通常時のエッジは無地（矢印・線のみ）。ホバー中のノード/エッジだけ強調し、
+  // 通常時のエッジは無地（矢印・線のみ）。強調中のノード/エッジだけ強調し、
   // 繋がりが少ない時だけ種別・スコアのラベルを添える（JP_Market_Vis の displayEdges と同じ方針）。
   const displayEdges = useMemo(() => {
     const labelOk = hoverNodeEdgeCount > 0 && hoverNodeEdgeCount <= HOVER_LABEL_MAX_EDGES;
     return edges.map((e) => {
-      const touchesHoverNode = hoveredNodeId && (e.source === hoveredNodeId || e.target === hoveredNodeId);
+      const touchesHighlight = highlightNodeId && (e.source === highlightNodeId || e.target === highlightNodeId);
       const isHoverEdge = e.id === hoveredEdgeId;
-      if (!hoveredNodeId && !isHoverEdge) return e;
-      const dim = hoveredNodeId && !touchesHoverNode;
-      const emphasize = isHoverEdge || touchesHoverNode;
-      const withLabel = isHoverEdge || (touchesHoverNode && labelOk);
+      if (!highlightNodeId && !isHoverEdge) return e;
+      const dim = highlightNodeId && !touchesHighlight;
+      const emphasize = isHoverEdge || touchesHighlight;
+      const withLabel = isHoverEdge || (touchesHighlight && labelOk);
       const label = withLabel
         ? `${e.data.typeJa}${e.data.scoreVal != null ? ` ${e.data.scoreVal.toFixed(2)}` : ''}`
         : '';
@@ -118,7 +124,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
         },
       };
     });
-  }, [edges, hoveredNodeId, hoveredEdgeId, hoverNodeEdgeCount]);
+  }, [edges, highlightNodeId, hoveredEdgeId, hoverNodeEdgeCount]);
 
   // クリック = 詳細表示（中心ノードも含め、表示中のどの論文/エンティティでも共通）。
   // 中心を切り替える「関係グラフを開く」操作はダブルクリック、または詳細パネルの
@@ -170,7 +176,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
       <SearchSidebar selectedUrl={centerUrl} onSelect={handleSidebarSelect} />
       <div className="ego-canvas">
         <div className="overlay-box graph-caption">
-          点線=類似論文のさらに類似論文（間接）。クリックで詳細、ダブルクリックでその論文を中心に表示します。
+          点線=類似論文のさらに類似論文（間接）。クリックで詳細表示とつながりの強調、ダブルクリックでその論文を中心に表示します。
         </div>
         <BackBar history={history} onBack={onBack} />
         {truncated > 0 && (
@@ -191,6 +197,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
           onNodeMouseLeave={onNodeMouseLeave}
           onEdgeMouseEnter={onEdgeMouseEnter}
           onEdgeMouseLeave={onEdgeMouseLeave}
+          onPaneClick={() => setSelection(null)}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.1}
