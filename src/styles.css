@@ -150,6 +150,9 @@ input[type="range"] { width: 100%; }
   border-radius: 8px;
   font-size: 13px;
 }
+.search-input-row { display: flex; gap: 6px; align-items: center; }
+.search-input-row .search-input { flex: 1; }
+.search-input-row .btn { padding: 6px 10px; }
 .search-results { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .search-result {
   text-align: left;
@@ -194,6 +197,7 @@ input[type="range"] { width: 100%; }
 }
 .back-bar { top: 12px; right: 12px; }
 .truncated-note { bottom: 12px; left: 12px; color: var(--text-2); }
+.graph-caption { top: 12px; left: 12px; color: var(--text-2); max-width: 320px; }
 .btn {
   display: inline-block;
   border: 1px solid var(--border-strong);

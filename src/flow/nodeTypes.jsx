@@ -42,7 +42,17 @@ function CenterNode({ data }) {
 function PaperNode({ data }) {
   const color = CATEGORY_TEXT_COLORS[data.category] ?? '#0369a1';
   return (
-    <BaseNode style={{ border: `1px solid ${color}` }} dimmed={data.dimmed}>
+    <BaseNode
+      style={{
+        border: data.indirect ? `1px dashed ${color}` : `1px solid ${color}`,
+        maxWidth: data.indirect ? 180 : 220,
+        opacity: data.indirect ? 0.85 : 1,
+      }}
+      dimmed={data.dimmed}
+    >
+      {data.indirect && (
+        <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', marginBottom: 2 }}>類似論文の類似論文</div>
+      )}
       {dot(color)}
       {data.label}
       {data.score != null && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>score {data.score}</div>}

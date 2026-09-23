@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, PAPER_GLOBAL_GRAPH, searchPapers } from '../data/graph.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, PAPERS, PAPER_GLOBAL_GRAPH, neighborsOf, searchPapers } from '../data/graph.js';
 
 // JP_Market_Vis の全体マップ（白い円+業種色の縁、円の大きさ=関係数）を踏襲。
 // ノード=論文（SIMILAR_TOを持つものだけ）、縁の色=カテゴリ、大きさ=SIMILAR_TO本数(degree)。
 const nodeRadius = (degree) => Math.max(2.5, Math.min(22, Math.sqrt(degree) * 4));
 const AVAILABLE_CATEGORIES = Object.keys(CATEGORIES);
 const DEFAULT_MAX_NODES = 1500;
+const SEARCH_HIT_LIMIT = 25;
+const SEARCH_CONTEXT_PER_HIT = 5;
 
 function filterGraph(activeCategories, minDegree, maxNodes) {
   let nodes = PAPER_GLOBAL_GRAPH.nodes.filter(
@@ -21,6 +23,41 @@ function filterGraph(activeCategories, minDegree, maxNodes) {
   return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length) };
 }
 
+// キーワードに一致した論文＋その類似論文（文脈）だけで構成する部分グラフを作る。
+// 一致論文だけだと互いに孤立した点の羅列になりがちなので、SIMILAR_TOで繋がる周辺も
+// 少数加えて「関連する論文のナレッジグラフ」として見えるようにする。
+function buildSearchGraph(query, maxNodes) {
+  const hits = searchPapers(query, SEARCH_HIT_LIMIT);
+  const nodeMap = new Map(); // url -> node
+  const addNode = (url, matched) => {
+    const p = PAPERS[url];
+    if (!p) return;
+    const existing = nodeMap.get(url);
+    if (existing) { existing.matched = existing.matched || matched; return; }
+    const degree = neighborsOf({ kind: 'paper', key: url }).filter((n) => n.other.kind === 'paper').length;
+    nodeMap.set(url, { id: url, title: p.title, category: p.category || 'uncategorized', score: p.score, degree, matched });
+  };
+  for (const { url } of hits) addNode(url, true);
+  for (const { url } of hits) {
+    const nbs = neighborsOf({ kind: 'paper', key: url })
+      .filter((n) => n.other.kind === 'paper')
+      .sort((a, b) => (b.relation.score ?? 0) - (a.relation.score ?? 0))
+      .slice(0, SEARCH_CONTEXT_PER_HIT);
+    for (const nb of nbs) addNode(nb.other.key, false);
+  }
+  let nodes = [...nodeMap.values()];
+  const totalMatching = nodes.length;
+  if (nodes.length > maxNodes) {
+    nodes.sort((a, b) => (b.matched - a.matched) || (b.degree - a.degree));
+    nodes = nodes.slice(0, maxNodes);
+  }
+  const ids = new Set(nodes.map((n) => n.id));
+  const links = PAPER_GLOBAL_GRAPH.links.filter(
+    (l) => ids.has(l.source.id ?? l.source) && ids.has(l.target.id ?? l.target),
+  );
+  return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length), hitCount: hits.length };
+}
+
 export default function GlobalMap({ onOpenPaper }) {
   const fgRef = useRef(null);
   const wrapRef = useRef(null);
@@ -31,7 +68,8 @@ export default function GlobalMap({ onOpenPaper }) {
   const [minDegree, setMinDegree] = useState(1);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
   const [query, setQuery] = useState('');
-  const results = useMemo(() => (query.trim() ? searchPapers(query, 12) : []), [query]);
+  const isSearching = query.trim().length > 0;
+  const results = useMemo(() => (isSearching ? searchPapers(query, 12) : []), [isSearching, query]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -43,8 +81,8 @@ export default function GlobalMap({ onOpenPaper }) {
   }, []);
 
   const data = useMemo(
-    () => filterGraph(activeCategories, minDegree, maxNodes),
-    [activeCategories, minDegree, maxNodes],
+    () => (isSearching ? buildSearchGraph(query, maxNodes) : filterGraph(activeCategories, minDegree, maxNodes)),
+    [isSearching, query, activeCategories, minDegree, maxNodes],
   );
 
   useEffect(() => {
@@ -67,7 +105,9 @@ export default function GlobalMap({ onOpenPaper }) {
   const drawNode = useCallback((node, ctx, scale) => {
     const hover = node === hoverRef.current;
     const color = CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8';
-    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1);
+    // 検索中は「一致した論文」を塗りつぶし、「文脈として加えた周辺の論文」は薄い白丸のままにする
+    const isContextOnly = isSearching && node.matched === false;
+    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
     if (!hover && r * scale < 1.6) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
@@ -77,11 +117,13 @@ export default function GlobalMap({ onOpenPaper }) {
     }
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = isSearching && node.matched ? color : '#ffffff';
+    ctx.globalAlpha = isContextOnly ? 0.5 : 1;
     ctx.fill();
     ctx.lineWidth = hover ? 2.5 : 1.4;
     ctx.strokeStyle = color;
     ctx.stroke();
+    ctx.globalAlpha = 1;
     if (hover) {
       ctx.font = `600 ${12 / scale}px sans-serif`;
       ctx.textAlign = 'center';
@@ -95,16 +137,16 @@ export default function GlobalMap({ onOpenPaper }) {
       ctx.fillStyle = '#0f172a';
       ctx.fillText(label, node.x, y);
     }
-  }, []);
+  }, [isSearching]);
 
   const paintPointerArea = useCallback((node, color, ctx) => {
     const hover = node === hoverRef.current;
-    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1);
+    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-  }, []);
+  }, [isSearching]);
 
   const onNodeHover = useCallback((node) => {
     hoverRef.current = node || null;
@@ -124,38 +166,51 @@ export default function GlobalMap({ onOpenPaper }) {
         </div>
         <section className="control-section">
           <label htmlFor="map-search">論文を検索</label>
-          <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
-          {query.trim() && (
-            <div className="search-results" aria-live="polite">
-              {results.map(({ url, paper }) => (
-                <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
-                  <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
-                  <br />{paper.title}
-                </button>
-              ))}
-              {!results.length && <p>該当する論文がありません</p>}
-            </div>
+          <div className="search-input-row">
+            <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
+            {isSearching && <button className="btn" onClick={() => setQuery('')}>✕</button>}
+          </div>
+          {isSearching && (
+            <>
+              <p className="control-note">
+                濃い円=一致した論文（{data.hitCount ?? 0}件）、薄い円=それらの類似論文（文脈として表示）。
+                クリックで関係グラフを開きます。
+              </p>
+              <div className="search-results" aria-live="polite">
+                {results.map(({ url, paper }) => (
+                  <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
+                    <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
+                    <br />{paper.title}
+                  </button>
+                ))}
+                {!results.length && <p>該当する論文がありません</p>}
+              </div>
+            </>
           )}
         </section>
-        <section className="control-section">
-          <h3>カテゴリ</h3>
-          <div className="category-pills">
-            {Object.entries(CATEGORIES).map(([key, label]) => {
-              const active = activeCategories.has(key);
-              const color = CATEGORY_TEXT_COLORS[key];
-              return (
-                <button key={key} aria-pressed={active} onClick={() => toggleCategory(key)}
-                  style={{ color: active ? color : 'var(--text-2)', border: `1px solid ${active ? color : 'var(--border-strong)'}`, background: active ? `${color}14` : 'var(--bg)' }}>
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-        <section className="control-section">
-          <label className="range-caption" htmlFor="min-degree">最小類似論文数 <strong>{minDegree}</strong></label>
-          <input id="min-degree" type="range" min="1" max="10" value={minDegree} onChange={(e) => setMinDegree(Number(e.target.value))} />
-        </section>
+        {!isSearching && (
+          <>
+            <section className="control-section">
+              <h3>カテゴリ</h3>
+              <div className="category-pills">
+                {Object.entries(CATEGORIES).map(([key, label]) => {
+                  const active = activeCategories.has(key);
+                  const color = CATEGORY_TEXT_COLORS[key];
+                  return (
+                    <button key={key} aria-pressed={active} onClick={() => toggleCategory(key)}
+                      style={{ color: active ? color : 'var(--text-2)', border: `1px solid ${active ? color : 'var(--border-strong)'}`, background: active ? `${color}14` : 'var(--bg)' }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+            <section className="control-section">
+              <label className="range-caption" htmlFor="min-degree">最小類似論文数 <strong>{minDegree}</strong></label>
+              <input id="min-degree" type="range" min="1" max="10" value={minDegree} onChange={(e) => setMinDegree(Number(e.target.value))} />
+            </section>
+          </>
+        )}
         <section className="control-section">
           <label className="range-caption" htmlFor="max-nodes">表示件数の上限（可視化候補数） <strong>{maxNodes.toLocaleString()}</strong></label>
           <input id="max-nodes" type="range" min="100" max="10988" step="100" value={maxNodes} onChange={(e) => setMaxNodes(Number(e.target.value))} />
@@ -186,7 +241,7 @@ export default function GlobalMap({ onOpenPaper }) {
         {!data.nodes.length && (
           <div className="map-empty" role="status">
             <strong>表示できる論文がありません</strong>
-            <span>カテゴリを選択するか、最小類似論文数を下げてください。</span>
+            <span>{isSearching ? '別のキーワードを試してください。' : 'カテゴリを選択するか、最小類似論文数を下げてください。'}</span>
           </div>
         )}
         {hoverNode && (

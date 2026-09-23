@@ -49,10 +49,15 @@ function BackBar({ history, onBack }) {
   );
 }
 
+// ホバー中ノードの接続本数がこれ以下の時だけ、そのノードのエッジに種別・スコアのラベルを出す。
+// 隣接数の多いノード（中心など）で全ラベルを出すと重なって読めなくなるため。
+const HOVER_LABEL_MAX_EDGES = 8;
+
 function GraphView({ centerUrl, setCenterUrl }) {
   const [selection, setSelection] = useState(null);
   const [history, setHistory] = useState([]);
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState(null);
 
   const { nodes, edges, truncated } = useMemo(() => buildEgoNetwork(centerUrl), [centerUrl]);
 
@@ -66,6 +71,38 @@ function GraphView({ centerUrl, setCenterUrl }) {
     }
     return nodes.map((n) => ({ ...n, data: { ...n.data, dimmed: hoveredNodeId ? !connected.has(n.id) : false } }));
   }, [nodes, edges, hoveredNodeId]);
+
+  // ホバー中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
+  const hoverNodeEdgeCount = useMemo(
+    () => (hoveredNodeId ? edges.filter((e) => e.source === hoveredNodeId || e.target === hoveredNodeId).length : 0),
+    [edges, hoveredNodeId],
+  );
+
+  // 通常時のエッジは無地（矢印・線のみ）。ホバー中のノード/エッジだけ強調し、
+  // 繋がりが少ない時だけ種別・スコアのラベルを添える（JP_Market_Vis の displayEdges と同じ方針）。
+  const displayEdges = useMemo(() => {
+    const labelOk = hoverNodeEdgeCount > 0 && hoverNodeEdgeCount <= HOVER_LABEL_MAX_EDGES;
+    return edges.map((e) => {
+      const touchesHoverNode = hoveredNodeId && (e.source === hoveredNodeId || e.target === hoveredNodeId);
+      const isHoverEdge = e.id === hoveredEdgeId;
+      if (!hoveredNodeId && !isHoverEdge) return e;
+      const dim = hoveredNodeId && !touchesHoverNode;
+      const emphasize = isHoverEdge || touchesHoverNode;
+      const withLabel = isHoverEdge || (touchesHoverNode && labelOk);
+      const label = withLabel
+        ? `${e.data.typeJa}${e.data.scoreVal != null ? ` ${e.data.scoreVal.toFixed(2)}` : ''}`
+        : '';
+      return {
+        ...e,
+        label,
+        style: {
+          ...e.style,
+          opacity: dim ? 0.1 : emphasize ? 1 : e.style.opacity,
+          strokeWidth: emphasize ? 2.6 : e.style.strokeWidth,
+        },
+      };
+    });
+  }, [edges, hoveredNodeId, hoveredEdgeId, hoverNodeEdgeCount]);
 
   const onNodeClick = useCallback((_, node) => {
     const ref = node.data.ref;
@@ -81,6 +118,8 @@ function GraphView({ centerUrl, setCenterUrl }) {
   const onEdgeClick = useCallback((_, edge) => setSelection({ kind: 'edge', relation: edge.data.relation }), []);
   const onNodeMouseEnter = useCallback((_, node) => setHoveredNodeId(node.id), []);
   const onNodeMouseLeave = useCallback(() => setHoveredNodeId(null), []);
+  const onEdgeMouseEnter = useCallback((_, edge) => setHoveredEdgeId(edge.id), []);
+  const onEdgeMouseLeave = useCallback(() => setHoveredEdgeId(null), []);
 
   const onBack = useCallback(() => {
     setHistory((h) => {
@@ -106,6 +145,9 @@ function GraphView({ centerUrl, setCenterUrl }) {
     <div className="graph-view">
       <SearchSidebar selectedUrl={centerUrl} onSelect={handleSidebarSelect} />
       <div className="ego-canvas">
+        <div className="overlay-box graph-caption">
+          点線=類似論文のさらに類似論文（間接）。ノードにマウスを合わせると関連を強調表示します。
+        </div>
         <BackBar history={history} onBack={onBack} />
         {truncated > 0 && (
           <div className="overlay-box truncated-note">
@@ -115,12 +157,14 @@ function GraphView({ centerUrl, setCenterUrl }) {
         <ReactFlow
           key={centerUrl}
           nodes={displayNodes}
-          edges={edges}
+          edges={displayEdges}
           nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
           onEdgeClick={onEdgeClick}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeMouseLeave={onNodeMouseLeave}
+          onEdgeMouseEnter={onEdgeMouseEnter}
+          onEdgeMouseLeave={onEdgeMouseLeave}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           minZoom={0.1}
