@@ -1,7 +1,7 @@
 import React from 'react';
 import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, RELATION_TYPE_JA, degreeOf } from '../data/graph.js';
 
-function PaperDetail({ url, paper, onSelectPaper }) {
+function PaperDetail({ url, paper, isCenter, onCenterPaper }) {
   const color = CATEGORY_TEXT_COLORS[paper.category] ?? '#475569';
   return (
     <>
@@ -30,7 +30,12 @@ function PaperDetail({ url, paper, onSelectPaper }) {
         <h4>Abstract</h4>
         <p className="abstract">{paper.abstract}</p>
       </section>
-      <a className="btn" href={url} target="_blank" rel="noreferrer">論文を開く ↗</a>
+      <div className="detail-actions">
+        <a className="btn" href={url} target="_blank" rel="noreferrer">論文を開く ↗</a>
+        {!isCenter && onCenterPaper && (
+          <button className="btn" onClick={() => onCenterPaper(url)}>この論文を中心に表示</button>
+        )}
+      </div>
     </>
   );
 }
@@ -65,7 +70,7 @@ function EdgeDetail({ relation }) {
   );
 }
 
-export default function DetailPanel({ selection, onClose }) {
+export default function DetailPanel({ selection, centerUrl, onClose, onCenterPaper }) {
   return (
     <aside className="detail-panel" aria-label="詳細パネル">
       {!selection && <p className="detail-empty">ノードをクリックすると詳細が表示されます。</p>}
@@ -73,7 +78,12 @@ export default function DetailPanel({ selection, onClose }) {
         <>
           <button className="detail-close" onClick={onClose} aria-label="閉じる">×</button>
           {selection.kind === 'node' && selection.ref.kind === 'paper' && (
-            <PaperDetail url={selection.ref.key} paper={selection.info} />
+            <PaperDetail
+              url={selection.ref.key}
+              paper={selection.info}
+              isCenter={selection.ref.key === centerUrl}
+              onCenterPaper={onCenterPaper}
+            />
           )}
           {selection.kind === 'node' && selection.ref.kind !== 'paper' && (
             <EntityDetail kind={selection.ref.kind} name={selection.ref.key} entity={selection.info} />

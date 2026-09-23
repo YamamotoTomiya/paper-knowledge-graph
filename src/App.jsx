@@ -58,6 +58,17 @@ function GraphView({ centerUrl, setCenterUrl }) {
   const [history, setHistory] = useState([]);
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState(null);
+  // React Flowが計測したノードの実サイズ。ノード配列は毎回作り直すので、計測結果を自分で
+  // 保持して渡さないとReact Flowが「サイズ未確定」を繰り返し検出し、エッジの接続点が
+  // 定まらず点滅して見える（JP_Market_Vis App.jsx の GraphView と同じ対策）。
+  const [measured, setMeasured] = useState({});
+  const onNodesChange = useCallback((changes) => {
+    setMeasured((prev) => {
+      let next = null;
+      for (const c of changes) if (c.type === 'dimensions' && c.dimensions) (next ??= { ...prev })[c.id] = c.dimensions;
+      return next ?? prev;
+    });
+  }, []);
 
   const { nodes, edges, truncated } = useMemo(() => buildEgoNetwork(centerUrl), [centerUrl]);
 
@@ -69,8 +80,12 @@ function GraphView({ centerUrl, setCenterUrl }) {
         if (e.target === hoveredNodeId) connected.add(e.source);
       }
     }
-    return nodes.map((n) => ({ ...n, data: { ...n.data, dimmed: hoveredNodeId ? !connected.has(n.id) : false } }));
-  }, [nodes, edges, hoveredNodeId]);
+    return nodes.map((n) => ({
+      ...n,
+      measured: measured[n.id],
+      data: { ...n.data, dimmed: hoveredNodeId ? !connected.has(n.id) : false },
+    }));
+  }, [nodes, edges, hoveredNodeId, measured]);
 
   // ホバー中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
   const hoverNodeEdgeCount = useMemo(
@@ -104,16 +119,24 @@ function GraphView({ centerUrl, setCenterUrl }) {
     });
   }, [edges, hoveredNodeId, hoveredEdgeId, hoverNodeEdgeCount]);
 
+  // クリック = 詳細表示（中心ノードも含め、表示中のどの論文/エンティティでも共通）。
+  // 中心を切り替える「関係グラフを開く」操作はダブルクリック、または詳細パネルの
+  // ボタンから明示的に行う（クリックしただけで中心が変わると誤操作しやすいため）。
   const onNodeClick = useCallback((_, node) => {
-    const ref = node.data.ref;
-    if (ref.kind === 'paper' && ref.key !== centerUrl) {
-      setHistory((h) => [...h, centerUrl]);
-      setCenterUrl(ref.key);
-      setSelection(null);
-      return;
-    }
-    setSelection({ kind: 'node', ref, info: nodeInfo(ref) });
+    setSelection({ kind: 'node', ref: node.data.ref, info: nodeInfo(node.data.ref) });
+  }, []);
+
+  const recenterOn = useCallback((url) => {
+    if (url === centerUrl) return;
+    setHistory((h) => [...h, centerUrl]);
+    setCenterUrl(url);
+    setSelection(null);
   }, [centerUrl, setCenterUrl]);
+
+  const onNodeDoubleClick = useCallback((_, node) => {
+    const ref = node.data.ref;
+    if (ref.kind === 'paper') recenterOn(ref.key);
+  }, [recenterOn]);
 
   const onEdgeClick = useCallback((_, edge) => setSelection({ kind: 'edge', relation: edge.data.relation }), []);
   const onNodeMouseEnter = useCallback((_, node) => setHoveredNodeId(node.id), []);
@@ -146,7 +169,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
       <SearchSidebar selectedUrl={centerUrl} onSelect={handleSidebarSelect} />
       <div className="ego-canvas">
         <div className="overlay-box graph-caption">
-          点線=類似論文のさらに類似論文（間接）。ノードにマウスを合わせると関連を強調表示します。
+          点線=類似論文のさらに類似論文（間接）。クリックで詳細、ダブルクリックでその論文を中心に表示します。
         </div>
         <BackBar history={history} onBack={onBack} />
         {truncated > 0 && (
@@ -159,7 +182,9 @@ function GraphView({ centerUrl, setCenterUrl }) {
           nodes={displayNodes}
           edges={displayEdges}
           nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
           onNodeClick={onNodeClick}
+          onNodeDoubleClick={onNodeDoubleClick}
           onEdgeClick={onEdgeClick}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeMouseLeave={onNodeMouseLeave}
@@ -180,7 +205,7 @@ function GraphView({ centerUrl, setCenterUrl }) {
           />
         </ReactFlow>
       </div>
-      <DetailPanel selection={selection} onClose={() => setSelection(null)} />
+      <DetailPanel selection={selection} centerUrl={centerUrl} onClose={() => setSelection(null)} onCenterPaper={recenterOn} />
     </div>
   );
 }
