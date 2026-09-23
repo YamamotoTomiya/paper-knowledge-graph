@@ -10,10 +10,20 @@ import {
 const nodeRadius = (degree) => Math.max(2.5, Math.min(22, Math.sqrt(degree) * 4));
 const AVAILABLE_CATEGORIES = Object.keys(CATEGORIES);
 const DEFAULT_MAX_NODES = 1500;
+const DEFAULT_ENTITY_BUDGET = 250;
 const SEARCH_HIT_LIMIT = 25;
 const SEARCH_CONTEXT_PER_HIT = 5;
 const SEARCH_ENTITIES_PER_HIT = 6;
 const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
+
+function useDebouncedValue(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 // ノード上部にホバー時のラベル（白背景付き）を描く共通処理。offsetY=ノード上端からの距離
 function drawHoverLabel(ctx, node, offsetY, scale, text) {
@@ -29,17 +39,56 @@ function drawHoverLabel(ctx, node, offsetY, scale, text) {
   ctx.fillText(label, node.x, y);
 }
 
-function filterGraph(activeCategories, minDegree, maxNodes) {
-  let nodes = PAPER_GLOBAL_GRAPH.nodes.filter(
+// 表示中の論文集合に対して、それらが扱うConcept/Method/Representationのうち
+// 表示中の論文との接続数が多いもの（=いま見えている範囲でのハブ的な概念）を
+// 一定数だけ選んで加える。論文数がいくら多くても際限なく増えないよう上限で絞る。
+function addEntityContext(paperNodes, budget) {
+  const entityCount = new Map(); // id -> 接続数
+  const entityInfo = new Map(); // id -> {kind, title}
+  for (const p of paperNodes) {
+    for (const nb of neighborsOf({ kind: 'paper', key: p.id })) {
+      if (nb.other.kind === 'paper') continue;
+      const id = nodeKey(nb.other);
+      entityCount.set(id, (entityCount.get(id) ?? 0) + 1);
+      if (!entityInfo.has(id)) entityInfo.set(id, { kind: nb.other.kind, title: nodeName(nb.other) });
+    }
+  }
+  const topIds = new Set(
+    [...entityCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, budget).map(([id]) => id),
+  );
+  const entityNodes = [...topIds].map((id) => ({
+    id, kind: entityInfo.get(id).kind, title: entityInfo.get(id).title, degree: entityCount.get(id),
+  }));
+  const entityLinks = [];
+  for (const p of paperNodes) {
+    for (const nb of neighborsOf({ kind: 'paper', key: p.id })) {
+      if (nb.other.kind === 'paper' || !topIds.has(nodeKey(nb.other))) continue;
+      entityLinks.push({ source: p.id, target: nodeKey(nb.other), kind: 'entity', entityKind: nb.other.kind });
+    }
+  }
+  return { entityNodes, entityLinks };
+}
+
+function filterGraph(activeCategories, minDegree, maxNodes, showEntities) {
+  let paperNodes = PAPER_GLOBAL_GRAPH.nodes.filter(
     (n) => activeCategories.has(n.category) && n.degree >= minDegree,
   );
-  const totalMatching = nodes.length;
-  nodes = [...nodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
-  const ids = new Set(nodes.map((n) => n.id));
-  const links = PAPER_GLOBAL_GRAPH.links.filter(
-    (l) => ids.has(l.source.id ?? l.source) && ids.has(l.target.id ?? l.target),
-  );
-  return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length) };
+  const totalMatching = paperNodes.length;
+  paperNodes = [...paperNodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
+  const ids = new Set(paperNodes.map((n) => n.id));
+  const similarLinks = PAPER_GLOBAL_GRAPH.links
+    .filter((l) => ids.has(l.source.id ?? l.source) && ids.has(l.target.id ?? l.target))
+    .map((l) => ({ source: l.source.id ?? l.source, target: l.target.id ?? l.target, kind: 'similar' }));
+
+  if (!showEntities) {
+    return { nodes: paperNodes, links: similarLinks, truncated: Math.max(0, totalMatching - paperNodes.length) };
+  }
+  const { entityNodes, entityLinks } = addEntityContext(paperNodes, DEFAULT_ENTITY_BUDGET);
+  return {
+    nodes: [...paperNodes, ...entityNodes],
+    links: [...similarLinks, ...entityLinks],
+    truncated: Math.max(0, totalMatching - paperNodes.length),
+  };
 }
 
 // キーワードに一致した論文＋その類似論文（文脈）＋一致論文が扱うConcept/Method/Representation
@@ -112,15 +161,15 @@ export default function GlobalMap({ onOpenPaper }) {
   const [activeCategories, setActiveCategories] = useState(new Set(AVAILABLE_CATEGORIES));
   const [minDegree, setMinDegree] = useState(1);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
+  const [showEntities, setShowEntities] = useState(true);
   const [query, setQuery] = useState('');
-  // グラフの再構築はキー入力のたびに行わず、入力が止まってから行う。
-  // 毎キー入力でグラフを作り直すとForceGraph2Dが完全新規データとして扱い、
-  // ノード位置がリセットされて画面がちらつく（エッジが点滅して見える）ため。
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(query), 350);
-    return () => clearTimeout(t);
-  }, [query]);
+  // グラフの再構築は毎回の入力・スライダー操作のたびに行わず、操作が止まってから行う。
+  // 毎回作り直すとForceGraph2Dが完全新規データとして扱い、ノード位置がリセットされて
+  // 画面がちらつく（エッジが点滅して見える）ため（検索ボックス・スライダー共通の対策）。
+  const debouncedQuery = useDebouncedValue(query, 350);
+  const debouncedActiveCategories = useDebouncedValue(activeCategories, 300);
+  const debouncedMinDegree = useDebouncedValue(minDegree, 300);
+  const debouncedMaxNodes = useDebouncedValue(maxNodes, 300);
   const isSearching = debouncedQuery.trim().length > 0;
   const results = useMemo(() => (isSearching ? searchPapers(debouncedQuery, 12) : []), [isSearching, debouncedQuery]);
 
@@ -134,8 +183,10 @@ export default function GlobalMap({ onOpenPaper }) {
   }, []);
 
   const data = useMemo(
-    () => (isSearching ? buildSearchGraph(debouncedQuery, maxNodes) : filterGraph(activeCategories, minDegree, maxNodes)),
-    [isSearching, debouncedQuery, activeCategories, minDegree, maxNodes],
+    () => (isSearching
+      ? buildSearchGraph(debouncedQuery, debouncedMaxNodes)
+      : filterGraph(debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities)),
+    [isSearching, debouncedQuery, debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities],
   );
 
   useEffect(() => {
@@ -224,11 +275,11 @@ export default function GlobalMap({ onOpenPaper }) {
     <div className="map-view">
       <aside className="map-sidebar" aria-label="全体マップの説明・検索・フィルタ">
         <h2>論文のつながりを俯瞰する</h2>
-        <p>円1つ=論文1本。白い円の縁の色=カテゴリ、大きさ=類似論文の本数。クリックするとその論文を中心に関係グラフが開きます。</p>
+        <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。論文をクリックするとその論文を中心に関係グラフが開きます。</p>
         <div className="map-totals" aria-live="polite">
           <div><strong>{data.nodes.filter((n) => n.kind === 'paper').length.toLocaleString()}</strong><span>表示中の論文</span></div>
           <div><strong>{data.links.length.toLocaleString()}</strong><span>表示中の関係</span></div>
-          {isSearching && (
+          {(isSearching || showEntities) && (
             <div><strong>{data.nodes.filter((n) => n.kind !== 'paper').length.toLocaleString()}</strong><span>コンセプト等</span></div>
           )}
         </div>
@@ -236,7 +287,7 @@ export default function GlobalMap({ onOpenPaper }) {
           <label htmlFor="map-search">論文を検索</label>
           <div className="search-input-row">
             <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {isSearching && <button className="btn" onClick={() => { setQuery(''); setDebouncedQuery(''); }}>✕</button>}
+            {isSearching && <button className="btn" onClick={() => setQuery('')}>✕</button>}
           </div>
           {isSearching && (
             <>
@@ -281,6 +332,24 @@ export default function GlobalMap({ onOpenPaper }) {
             <section className="control-section">
               <label className="range-caption" htmlFor="min-degree">最小類似論文数 <strong>{minDegree}</strong></label>
               <input id="min-degree" type="range" min="1" max="10" value={minDegree} onChange={(e) => setMinDegree(Number(e.target.value))} />
+            </section>
+            <section className="control-section">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={showEntities} onChange={(e) => setShowEntities(e.target.checked)} />
+                Concept/Method/Representationを表示
+              </label>
+              {showEntities && (
+                <>
+                  <p className="control-note">
+                    四角=表示中の論文が扱うConcept/Method/Representation（接続数が多い上位{DEFAULT_ENTITY_BUDGET}件まで）。
+                  </p>
+                  <div className="legend">
+                    <span><i style={{ borderColor: ENTITY_COLOR.concept }} />コンセプト</span>
+                    <span><i style={{ borderColor: ENTITY_COLOR.method }} />手法</span>
+                    <span><i style={{ borderColor: ENTITY_COLOR.representation }} />表現形式</span>
+                  </div>
+                </>
+              )}
             </section>
           </>
         )}
