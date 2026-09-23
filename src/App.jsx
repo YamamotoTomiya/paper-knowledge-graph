@@ -8,6 +8,7 @@ import { nodeTypes } from './flow/nodeTypes.jsx';
 import SearchSidebar from './components/SearchSidebar.jsx';
 import DetailPanel from './components/DetailPanel.jsx';
 import PaperTable from './components/PaperTable.jsx';
+import RelationTable from './components/RelationTable.jsx';
 import StatsView from './components/StatsView.jsx';
 import GlobalMap from './components/GlobalMap.jsx';
 
@@ -24,7 +25,7 @@ function Header({ view, setView }) {
         </div>
       </div>
       <nav aria-label="表示切り替え" className="view-tabs">
-        {Object.entries({ map: '全体マップ', graph: '関係グラフ', table: '論文一覧', stats: '統計' }).map(([key, label]) => (
+        {Object.entries({ map: '全体マップ', graph: '関係グラフ', table: '論文一覧', relations: '関係一覧', stats: '統計' }).map(([key, label]) => (
           <button
             key={key}
             aria-current={view === key ? 'page' : undefined}
@@ -245,8 +246,11 @@ export default function App() {
       {visited.has('table') && (
         <ViewPane active={view === 'table'}><PaperTable onOpenGraph={openGraph} /></ViewPane>
       )}
+      {visited.has('relations') && (
+        <ViewPane active={view === 'relations'}><RelationTable onOpenPaper={openGraph} /></ViewPane>
+      )}
       {visited.has('stats') && (
-        <ViewPane active={view === 'stats'}><StatsView /></ViewPane>
+        <ViewPane active={view === 'stats'}><StatsView onOpenPaper={openGraph} /></ViewPane>
       )}
       <footer className="app-footer">
         <span>収録 {STATS.papers.toLocaleString()}論文 · {STATS.relations.toLocaleString()}関係 · {STATS.topics.toLocaleString()}トピック</span>

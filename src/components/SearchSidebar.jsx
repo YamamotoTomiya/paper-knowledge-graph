@@ -1,10 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, neighborsOf, searchPapers } from '../data/graph.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_ENTRIES, neighborsOf, searchPapers } from '../data/graph.js';
 import { preloadSemanticSearch, searchEntitiesBySimilarity } from '../data/semanticSearch.js';
 
 const BASE_URL = import.meta.env?.BASE_URL ?? '/';
 const DEFAULT_LIMIT = 20;
 const DEFAULT_THRESHOLD = 0.55;
+// キーワード未入力時に出すランキング（JP_Market_Vis の SearchSidebar が空欄時に
+// 関係数ランキングを出すのと同じ考え方。こちらはスコア順）
+const SCORE_RANKING = [...PAPER_ENTRIES].sort((a, b) => b.score - a.score).slice(0, 40);
 
 // 意味検索: クエリに近いConcept/Method/Representationを探し、それらと繋がる論文をスコア順に返す
 // （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）。
@@ -93,16 +96,17 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
         </div>
       )}
 
-      {mode === 'text' && query.trim() && (
+      {mode === 'text' && (
         <div className="search-results" aria-live="polite">
-          {textResults.map(({ url, paper }) => (
+          <p className="control-note">{query.trim() ? `検索結果 ${textResults.length} 件` : 'スコア上位40件（キーワード未入力時）'}</p>
+          {(query.trim() ? textResults : SCORE_RANKING.map((paper) => ({ url: paper.url, paper }))).map(({ url, paper }) => (
             <button key={url} className={`search-result${url === selectedUrl ? ' active' : ''}`} onClick={() => onSelect(url)}>
               <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
               <br />{paper.title}
               <br /><small>score {paper.score}</small>
             </button>
           ))}
-          {!textResults.length && <p>該当する論文がありません</p>}
+          {query.trim() && !textResults.length && <p>該当する論文がありません</p>}
         </div>
       )}
 

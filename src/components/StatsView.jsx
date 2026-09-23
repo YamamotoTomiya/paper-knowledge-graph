@@ -1,9 +1,15 @@
 import React, { useMemo } from 'react';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, META, STATS, TOPICS } from '../data/graph.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, META, PAPER_GLOBAL_GRAPH, STATS, TOPICS } from '../data/graph.js';
 
-export default function StatsView() {
+export default function StatsView({ onOpenPaper }) {
   const topTopics = useMemo(
     () => Object.entries(STATS.byTopic).sort((a, b) => b[1] - a[1]).slice(0, 15),
+    [],
+  );
+  // 類似論文数（SIMILAR_TO）が多い、いわゆるハブ論文のランキング（JP_Market_Vis の
+  // 「ハブ企業ランキング」と同じ考え方）。クリックでその論文を中心に関係グラフを開く。
+  const hubPapers = useMemo(
+    () => [...PAPER_GLOBAL_GRAPH.nodes].sort((a, b) => b.degree - a.degree).slice(0, 20),
     [],
   );
 
@@ -51,6 +57,31 @@ export default function StatsView() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="stats-block stats-block-wide">
+        <h3>ハブ論文ランキング（類似論文数 上位20件）</h3>
+        <table className="data-table">
+          <thead>
+            <tr>
+              {['#', 'タイトル', 'カテゴリ', 'score', '類似論文数'].map((h) => <th key={h}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {hubPapers.map((p, i) => (
+              <tr key={p.id} tabIndex={0} className="clickable-row"
+                onClick={() => onOpenPaper?.(p.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onOpenPaper?.(p.id); }}
+              >
+                <td>{i + 1}</td>
+                <td className="hub-title">{p.title}</td>
+                <td style={{ color: CATEGORY_TEXT_COLORS[p.category] }}>{CATEGORIES[p.category] ?? p.category}</td>
+                <td>{p.score}</td>
+                <td>{p.degree}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <p className="stats-footnote">データ生成 {META.generatedAt?.slice(0, 19).replace('T', ' ')} UTC</p>

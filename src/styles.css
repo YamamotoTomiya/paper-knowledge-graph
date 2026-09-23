@@ -270,6 +270,7 @@ input[type="range"] { width: 100%; }
 .stats-summary strong { font-size: 22px; }
 .stats-summary span { font-size: 11px; color: var(--text-2); }
 .stats-block { margin-bottom: 24px; max-width: 700px; }
+.stats-block-wide { max-width: 900px; }
 .stats-block h3 { font-size: 13px; color: var(--text-2); }
 .bar-list { display: flex; flex-direction: column; gap: 8px; }
 .bar-row { display: grid; grid-template-columns: 180px 1fr 60px; gap: 10px; align-items: center; font-size: 12px; }
@@ -278,6 +279,30 @@ input[type="range"] { width: 100%; }
 .bar-fill { height: 100%; border-radius: 999px; }
 .bar-value { text-align: right; color: var(--text-2); }
 .stats-footnote { font-size: 11px; color: var(--text-2); }
+
+/* --- Generic data table (stats ranking, relations list) --- */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.data-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table tr.clickable-row { cursor: pointer; }
+.data-table tr.clickable-row:hover { background: var(--bg-soft); }
+.data-table .hub-title { max-width: 420px; }
+.data-table tr.selected { background: #f0f9ff; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.link-cell { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; text-align: left; font-size: 12px; }
+.link-cell:hover { text-decoration: underline; }
+
+/* --- Relation table (関係一覧) --- */
+.relation-table-view { flex: 1; display: flex; min-height: 0; width: 100%; }
+.relation-table-main { flex: 1; display: flex; flex-direction: column; padding: 16px 20px; min-height: 0; min-width: 0; }
+.relation-table-scroll { flex: 1; overflow: auto; }
 
 @media (max-width: 900px) {
   .map-sidebar, .search-sidebar, .detail-panel { width: 220px; }
