@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import {
-  CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH,
+  CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH, TOPICS, TOPIC_COLORS,
   neighborsOf, nodeKey, nodeName, searchPapers,
 } from '../data/graph.js';
 
@@ -16,6 +16,9 @@ const SEARCH_CONTEXT_PER_HIT = 5;
 const SEARCH_ENTITIES_PER_HIT = 6;
 const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
 const LIST_PAGE_SIZE = 50;
+const TOPIC_LIST = Object.entries(TOPICS)
+  .map(([id, t]) => ({ id, ...t }))
+  .sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
 
 function useDebouncedValue(value, delay) {
   const [debounced, setDebounced] = useState(value);
@@ -70,9 +73,10 @@ function addEntityContext(paperNodes, budget) {
   return { entityNodes, entityLinks };
 }
 
-function filterGraph(activeCategories, minDegree, maxNodes, showEntities) {
+function filterGraph(activeCategories, minDegree, maxNodes, showEntities, topicFilter) {
   let paperNodes = PAPER_GLOBAL_GRAPH.nodes.filter(
-    (n) => activeCategories.has(n.category) && n.degree >= minDegree,
+    (n) => activeCategories.has(n.category) && n.degree >= minDegree
+      && (!topicFilter || n.topicId === topicFilter),
   );
   const totalMatching = paperNodes.length;
   paperNodes = [...paperNodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
@@ -105,7 +109,7 @@ function buildSearchGraph(query, maxNodes) {
     const existing = nodeMap.get(url);
     if (existing) { existing.matched = existing.matched || matched; return; }
     const degree = neighborsOf({ kind: 'paper', key: url }).filter((n) => n.other.kind === 'paper').length;
-    nodeMap.set(url, { id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', score: p.score, degree, matched });
+    nodeMap.set(url, { id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', topicId: p.topic_id ?? null, score: p.score, degree, matched });
   };
   for (const { url } of hits) addPaper(url, true);
   for (const { url } of hits) {
@@ -168,6 +172,8 @@ export default function GlobalMap({ onOpenPaper }) {
   const [showList, setShowList] = useState(true);
   const [listPage, setListPage] = useState(0);
   const [query, setQuery] = useState('');
+  const [topicFilter, setTopicFilter] = useState('');
+  const [colorByTopic, setColorByTopic] = useState(false);
   // グラフの再構築は毎回の入力・スライダー操作のたびに行わず、操作が止まってから行う。
   // 毎回作り直すとForceGraph2Dが完全新規データとして扱い、ノード位置がリセットされて
   // 画面がちらつく（エッジが点滅して見える）ため（検索ボックス・スライダー共通の対策）。
@@ -175,6 +181,7 @@ export default function GlobalMap({ onOpenPaper }) {
   const debouncedActiveCategories = useDebouncedValue(activeCategories, 300);
   const debouncedMinDegree = useDebouncedValue(minDegree, 300);
   const debouncedMaxNodes = useDebouncedValue(maxNodes, 300);
+  const debouncedTopicFilter = useDebouncedValue(topicFilter, 300);
   const isSearching = debouncedQuery.trim().length > 0;
   const results = useMemo(() => (isSearching ? searchPapers(debouncedQuery, 12) : []), [isSearching, debouncedQuery]);
 
@@ -190,8 +197,8 @@ export default function GlobalMap({ onOpenPaper }) {
   const data = useMemo(
     () => (isSearching
       ? buildSearchGraph(debouncedQuery, debouncedMaxNodes)
-      : filterGraph(debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities)),
-    [isSearching, debouncedQuery, debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities],
+      : filterGraph(debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter)),
+    [isSearching, debouncedQuery, debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter],
   );
 
   // 選択中ノードに直接つながるノードだけの集合（他を減光するため）。データが変わったら選択解除。
@@ -242,8 +249,11 @@ export default function GlobalMap({ onOpenPaper }) {
       return { isEntity: true, s, color: ENTITY_COLOR[node.kind] ?? '#94a3b8' };
     }
     const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
-    return { isEntity: false, r, color: CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8' };
-  }, [isSearching]);
+    const color = colorByTopic
+      ? (TOPIC_COLORS[node.topicId] ?? '#94a3b8')
+      : (CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8');
+    return { isEntity: false, r, color };
+  }, [isSearching, colorByTopic]);
 
   const drawNode = useCallback((node, ctx, scale) => {
     const hover = node === hoverRef.current;
@@ -404,6 +414,25 @@ export default function GlobalMap({ onOpenPaper }) {
               <input id="min-degree" type="range" min="1" max="10" value={minDegree} onChange={(e) => setMinDegree(Number(e.target.value))} />
             </section>
             <section className="control-section">
+              <h3>トピック</h3>
+              <select value={topicFilter} onChange={(e) => setTopicFilter(e.target.value)} style={{ width: '100%', marginBottom: 8 }}>
+                <option value="">すべてのトピック（{TOPIC_LIST.length}件）</option>
+                {TOPIC_LIST.map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}（{(t.size ?? 0).toLocaleString()}件）</option>
+                ))}
+              </select>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={colorByTopic} onChange={(e) => setColorByTopic(e.target.checked)} />
+                論文をトピックで色分け（オフ時はカテゴリで色分け）
+              </label>
+              {colorByTopic && (
+                <p className="control-note">
+                  円の縁の色がトピックごとに変わります（{TOPIC_LIST.length}色）。ノードにマウスを合わせると
+                  トピック名を確認できます。
+                </p>
+              )}
+            </section>
+            <section className="control-section">
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                 <input type="checkbox" checked={showEntities} onChange={(e) => setShowEntities(e.target.checked)} />
                 Concept/Method/Representationを表示
@@ -474,7 +503,11 @@ export default function GlobalMap({ onOpenPaper }) {
         {hoverNode && hoverNode.kind === 'paper' && (
           <div className="map-hover">
             <strong>{hoverNode.title}</strong>
-            <small>{CATEGORIES[hoverNode.category] ?? hoverNode.category} · score {hoverNode.score} · 類似論文 {hoverNode.degree}件</small>
+            <small>
+              {CATEGORIES[hoverNode.category] ?? hoverNode.category}
+              {hoverNode.topicId && TOPICS[hoverNode.topicId] && ` · ${TOPICS[hoverNode.topicId].label}`}
+              {' '}· score {hoverNode.score} · 類似論文 {hoverNode.degree}件
+            </small>
           </div>
         )}
         {hoverNode && hoverNode.kind !== 'paper' && (

@@ -47,6 +47,16 @@ export const CATEGORY_TEXT_COLORS = {
   uncategorized: '#475569',
 };
 
+// トピックごとの色（HSLを均等分割して生成。トピック数が変わっても自動で対応）
+export const TOPIC_COLORS = (() => {
+  const ids = Object.keys(TOPICS);
+  const colors = {};
+  ids.forEach((id, i) => {
+    colors[id] = `hsl(${Math.round((i * 360) / ids.length)}, 62%, 42%)`;
+  });
+  return colors;
+})();
+
 export const nodeKey = (ref) => `${ref.kind}:${ref.key}`;
 
 export function nodeInfo(ref) {
@@ -95,7 +105,10 @@ export const PAPER_GLOBAL_GRAPH = (() => {
   for (const [url, d] of degree) {
     const p = PAPERS[url];
     if (!p) continue;
-    nodes.push({ id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', score: p.score, degree: d });
+    nodes.push({
+      id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized',
+      topicId: p.topic_id ?? null, score: p.score, degree: d,
+    });
   }
   return { nodes, links };
 })();

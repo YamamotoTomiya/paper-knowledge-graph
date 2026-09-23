@@ -47,14 +47,33 @@ function Header({ view, setView }) {
   );
 }
 
-function BackBar({ history, onBack }) {
+// たどってきた経路をパンくずリストとして表示する。中心ノードだけでなく途中の経路も
+// クリックで直接戻れる（従来は直前の1件にしか戻れなかった）。
+function nodeLabelFor(ref) {
+  const info = nodeInfo(ref);
+  return (ref.kind === 'paper' ? info?.title : info?.name) ?? ref.key;
+}
+
+function BreadcrumbBar({ history, centerRef, onJump }) {
   if (history.length === 0) return null;
-  const prevRef = history[history.length - 1];
-  const prevInfo = nodeInfo(prevRef);
-  const label = prevRef.kind === 'paper' ? prevInfo?.title : prevInfo?.name;
+  const trail = [...history, centerRef];
   return (
-    <div className="overlay-box back-bar">
-      <button className="btn" onClick={onBack}>← {label ?? '戻る'}</button>
+    <div className="breadcrumb-bar" aria-label="閲覧履歴">
+      {trail.map((ref, i) => {
+        const isLast = i === trail.length - 1;
+        return (
+          <React.Fragment key={`${nodeKey(ref)}-${i}`}>
+            {i > 0 && <span className="breadcrumb-sep">›</span>}
+            {isLast ? (
+              <span className="breadcrumb-current" title={nodeLabelFor(ref)}>{nodeLabelFor(ref)}</span>
+            ) : (
+              <button className="breadcrumb-item" title={nodeLabelFor(ref)} onClick={() => onJump(i)}>
+                {nodeLabelFor(ref)}
+              </button>
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -166,13 +185,13 @@ function GraphView({ centerRef, setCenterRef }) {
   const onEdgeMouseEnter = useCallback((_, edge) => setHoveredEdgeId(edge.id), []);
   const onEdgeMouseLeave = useCallback(() => setHoveredEdgeId(null), []);
 
-  const onBack = useCallback(() => {
+  // パンくずの任意の地点（index）をクリックしたら、そこを中心に戻し、それより先の経路は破棄する。
+  const jumpTo = useCallback((index) => {
     setHistory((h) => {
-      if (h.length === 0) return h;
-      const prev = h[h.length - 1];
-      setCenterRef(prev);
+      if (index < 0 || index >= h.length) return h;
+      setCenterRef(h[index]);
       setSelection(null);
-      return h.slice(0, -1);
+      return h.slice(0, index);
     });
   }, [setCenterRef]);
 
@@ -191,11 +210,13 @@ function GraphView({ centerRef, setCenterRef }) {
     <div className="graph-view">
       <SearchSidebar selectedUrl={centerRef.kind === 'paper' ? centerRef.key : null} onSelect={handleSidebarSelect} />
       <div className="ego-canvas">
-        <div className="overlay-box graph-caption">
-          点線=類似論文のさらに類似論文（間接）。クリックで詳細表示とつながりの強調、ダブルクリックでそのノードを中心に表示します。
-          論文だけでなくConcept/Method/Representationも中心にできます。
+        <div className="overlay-stack overlay-stack-left">
+          <div className="overlay-box graph-caption">
+            点線=類似論文のさらに類似論文（間接）。クリックで詳細表示とつながりの強調、ダブルクリックでそのノードを中心に表示します。
+            論文だけでなくConcept/Method/Representationも中心にできます。
+          </div>
+          <BreadcrumbBar history={history} centerRef={centerRef} onJump={jumpTo} />
         </div>
-        <BackBar history={history} onBack={onBack} />
         <div className="overlay-box graph-settings">
           <label className="range-caption" htmlFor="max-neighbors">可視化候補数 <strong>{maxNeighbors}</strong></label>
           <input id="max-neighbors" type="range" min="20" max="400" step="10" value={maxNeighbors}

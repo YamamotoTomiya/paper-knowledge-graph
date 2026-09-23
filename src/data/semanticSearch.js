@@ -1,13 +1,12 @@
-// Concept/Method/Representationに対する意味検索（埋め込みベースの類似度検索）。
+// 論文タイトル/abstractおよびConcept/Method/Representationに対する意味検索（埋め込みベースの類似度検索）。
 //
 // build_graph.py 本体は Qwen3-Embedding-8B（4096次元、GPU前提）を使うが、静的サイトは
 // サーバーを持たないため、クエリのembedding化もブラウザ内で完結させる必要がある。
 // このプロジェクトが以前実際に使っていた軽量モデル all-MiniLM-L6-v2 を
 // transformers.js（WASM, ブラウザ内推論）で動かし、export_static.py が書き出した
-// 同モデルのConcept/Method/Representation embedding（entity_search.bin）とコサイン類似度を取る。
+// 同モデルのembedding（entity_search.bin, paper_search.bin）とコサイン類似度を取る。
 //
-// モデル（初回のみ ~25MB）・埋め込みデータ（~15MB）はどちらも初回の意味検索実行まで
-// 取得しない（遅延ロード）。
+// モデル（初回のみ ~25MB）・埋め込みデータはどちらも初回の意味検索実行まで取得しない（遅延ロード）。
 
 const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
 
@@ -37,11 +36,28 @@ function loadEntitySearchData(baseUrl) {
   return entitiesPromise;
 }
 
+let papersPromise = null;
+// { urls: string[], dim, vectors: Float32Array (n*dim) } — 全論文のタイトル+abstract embedding
+function loadPaperSearchData(baseUrl) {
+  if (!papersPromise) {
+    papersPromise = Promise.all([
+      fetch(`${baseUrl}data/paper_search_meta.json`).then((r) => r.json()),
+      fetch(`${baseUrl}data/paper_search.bin`).then((r) => r.arrayBuffer()),
+    ]).then(([meta, buf]) => ({
+      urls: meta.urls,
+      dim: meta.dim,
+      vectors: new Float32Array(buf),
+    }));
+  }
+  return papersPromise;
+}
+
 export function preloadSemanticSearch(baseUrl) {
   // ユーザーが意味検索UIを開いた時点で裏でロードを始め、実際に検索を打つ頃には
   // 揃っている見込みを高める（クリックしてから初めてfetchを始めると数秒待たされる）。
   getExtractor();
   loadEntitySearchData(baseUrl);
+  loadPaperSearchData(baseUrl);
 }
 
 export async function embedQuery(text) {
@@ -61,6 +77,22 @@ export async function searchEntitiesBySimilarity(baseUrl, query, { threshold = 0
     const offset = i * dim;
     for (let d = 0; d < dim; d += 1) dot += queryVec[d] * vectors[offset + d];
     if (dot >= threshold) hits.push({ ...entries[i], similarity: dot });
+  }
+  hits.sort((a, b) => b.similarity - a.similarity);
+  return hits.slice(0, limit);
+}
+
+// クエリと論文タイトル+abstractのembeddingを直接比較する意味検索
+// （Concept/Method/Representation経由の間接一致とは別に、論文本文そのものに近いかを見る）。
+export async function searchPapersBySimilarity(baseUrl, query, { threshold = 0.4, limit = 40 } = {}) {
+  const [queryVec, data] = await Promise.all([embedQuery(query), loadPaperSearchData(baseUrl)]);
+  const { urls, dim, vectors } = data;
+  const hits = [];
+  for (let i = 0; i < urls.length; i += 1) {
+    let dot = 0;
+    const offset = i * dim;
+    for (let d = 0; d < dim; d += 1) dot += queryVec[d] * vectors[offset + d];
+    if (dot >= threshold) hits.push({ url: urls[i], similarity: dot });
   }
   hits.sort((a, b) => b.similarity - a.similarity);
   return hits.slice(0, limit);

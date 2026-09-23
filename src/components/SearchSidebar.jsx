@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_ENTRIES, neighborsOf, searchPapers } from '../data/graph.js';
-import { preloadSemanticSearch, searchEntitiesBySimilarity } from '../data/semanticSearch.js';
+import { preloadSemanticSearch, searchEntitiesBySimilarity, searchPapersBySimilarity } from '../data/semanticSearch.js';
 
 const BASE_URL = import.meta.env?.BASE_URL ?? '/';
 const DEFAULT_LIMIT = 20;
@@ -9,26 +9,36 @@ const DEFAULT_THRESHOLD = 0.55;
 // 関係数ランキングを出すのと同じ考え方。こちらはスコア順）
 const SCORE_RANKING = [...PAPER_ENTRIES].sort((a, b) => b.score - a.score).slice(0, 40);
 
-// 意味検索: クエリに近いConcept/Method/Representationを探し、それらと繋がる論文をスコア順に返す
-// （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）。
+// 意味検索: (1) クエリに近いConcept/Method/Representationを探し、それらと繋がる論文
+// （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）と、
+// (2) クエリに近い論文タイトル・abstractそのもの、の両方を検索して類似度で1本にまとめる。
 async function semanticSearchPapers(query, { threshold, limit }) {
-  const entityHits = await searchEntitiesBySimilarity(BASE_URL, query, { threshold, limit: 40 });
-  const bestByPaper = new Map(); // url -> { similarity, entityName, entityKind }
+  const [entityHits, paperHits] = await Promise.all([
+    searchEntitiesBySimilarity(BASE_URL, query, { threshold, limit: 40 }),
+    searchPapersBySimilarity(BASE_URL, query, { threshold, limit: 60 }),
+  ]);
+  const bestByPaper = new Map(); // url -> { similarity, source, entityName?, entityKind? }
   for (const hit of entityHits) {
     const neighbors = neighborsOf({ kind: hit.kind, key: hit.normalized_name });
     for (const { other } of neighbors) {
       if (other.kind !== 'paper') continue;
       const prev = bestByPaper.get(other.key);
       if (!prev || hit.similarity > prev.similarity) {
-        bestByPaper.set(other.key, { similarity: hit.similarity, entityName: hit.name, entityKind: hit.kind });
+        bestByPaper.set(other.key, { similarity: hit.similarity, source: 'entity', entityName: hit.name, entityKind: hit.kind });
       }
+    }
+  }
+  for (const hit of paperHits) {
+    const prev = bestByPaper.get(hit.url);
+    if (!prev || hit.similarity > prev.similarity) {
+      bestByPaper.set(hit.url, { similarity: hit.similarity, source: 'paper' });
     }
   }
   const rows = [...bestByPaper.entries()]
     .map(([url, match]) => ({ url, paper: PAPERS[url], match }))
     .filter((r) => r.paper)
     .sort((a, b) => b.match.similarity - a.match.similarity || b.paper.score - a.paper.score);
-  return { rows: rows.slice(0, limit), entityHitCount: entityHits.length };
+  return { rows: rows.slice(0, limit), entityHitCount: entityHits.length, paperHitCount: paperHits.length };
 }
 
 export default function SearchSidebar({ selectedUrl, onSelect }) {
@@ -36,7 +46,7 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
   const [query, setQuery] = useState('');
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
-  const [semanticState, setSemanticState] = useState({ status: 'idle', rows: [], entityHitCount: 0 });
+  const [semanticState, setSemanticState] = useState({ status: 'idle', rows: [], entityHitCount: 0, paperHitCount: 0 });
 
   const textResults = useMemo(
     () => (mode === 'text' && query.trim() ? searchPapers(query, limit) : []),
@@ -52,10 +62,10 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
     if (!query.trim()) return;
     setSemanticState((s) => ({ ...s, status: 'loading' }));
     try {
-      const { rows, entityHitCount } = await semanticSearchPapers(query, { threshold, limit });
-      setSemanticState({ status: 'done', rows, entityHitCount });
+      const { rows, entityHitCount, paperHitCount } = await semanticSearchPapers(query, { threshold, limit });
+      setSemanticState({ status: 'done', rows, entityHitCount, paperHitCount });
     } catch (err) {
-      setSemanticState({ status: 'error', rows: [], entityHitCount: 0, message: err.message });
+      setSemanticState({ status: 'error', rows: [], entityHitCount: 0, paperHitCount: 0, message: err.message });
     }
   }, [query, threshold, limit]);
 
@@ -81,7 +91,7 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
       {mode === 'semantic' && (
         <div className="semantic-controls">
           <p className="control-note">
-            Concept/Method/Representationの名称とクエリをブラウザ内で埋め込みベクトル化し、コサイン類似度で検索します（初回は軽量モデル ~25MB を読み込みます）。
+            クエリと、論文タイトル/要約およびConcept/Method/Representationの名称をブラウザ内で埋め込みベクトル化し、コサイン類似度で検索します（初回は軽量モデル ~25MB を読み込みます）。
           </p>
           <label className="range-caption" htmlFor="sem-threshold">類似度閾値 <strong>{threshold.toFixed(2)}</strong></label>
           <input id="sem-threshold" type="range" min="0.3" max="0.9" step="0.01" value={threshold}
@@ -113,13 +123,21 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
       {mode === 'semantic' && semanticState.status === 'done' && (
         <div className="search-results" aria-live="polite">
           {semanticState.rows.length > 0 && (
-            <p className="control-note">類似Concept/Method/Representation {semanticState.entityHitCount}件がヒットし、関連論文を類似度順に表示しています。</p>
+            <p className="control-note">
+              類似Concept/Method/Representation {semanticState.entityHitCount}件・類似論文（タイトル/要約）{semanticState.paperHitCount}件がヒットしました。
+            </p>
           )}
           {semanticState.rows.map(({ url, paper, match }) => (
             <button key={url} className={`search-result${url === selectedUrl ? ' active' : ''}`} onClick={() => onSelect(url)}>
               <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
               <br />{paper.title}
-              <br /><small>{ENTITY_LABELS[match.entityKind]}「{match.entityName}」 類似度 {match.similarity.toFixed(2)} · score {paper.score}</small>
+              <br />
+              <small>
+                {match.source === 'paper'
+                  ? `タイトル/要約が類似 · 類似度 ${match.similarity.toFixed(2)}`
+                  : `${ENTITY_LABELS[match.entityKind]}「${match.entityName}」 類似度 ${match.similarity.toFixed(2)}`}
+                {' '}· score {paper.score}
+              </small>
             </button>
           ))}
           {!semanticState.rows.length && <p>該当する論文がありません（閾値を下げてみてください）</p>}

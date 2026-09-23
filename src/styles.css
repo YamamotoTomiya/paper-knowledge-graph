@@ -227,10 +227,48 @@ input[type="range"] { width: 100%; }
   padding: 6px 10px;
   font-size: 12px;
 }
-.back-bar { top: 12px; right: 12px; }
 .truncated-note { bottom: 12px; left: 12px; color: var(--text-2); }
-.graph-caption { top: 12px; left: 12px; color: var(--text-2); max-width: 320px; }
-.graph-settings { top: 52px; right: 12px; width: 180px; }
+.graph-caption { color: var(--text-2); max-width: 340px; }
+.graph-settings { top: 12px; right: 12px; width: 180px; }
+
+.overlay-stack { position: absolute; z-index: 10; display: flex; flex-direction: column; gap: 6px; }
+.overlay-stack-left { top: 12px; left: 12px; max-width: 340px; }
+.overlay-stack .overlay-box { position: static; }
+
+.breadcrumb-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.breadcrumb-item {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: left;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.breadcrumb-item:hover { text-decoration: underline; }
+.breadcrumb-current {
+  font-weight: 600;
+  color: var(--text);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.breadcrumb-sep { color: var(--text-2); }
 .btn {
   display: inline-block;
   border: 1px solid var(--border-strong);
@@ -340,4 +378,33 @@ input[type="range"] { width: 100%; }
 @media (max-width: 900px) {
   .map-sidebar, .search-sidebar, .detail-panel { width: 220px; }
   .paper-row { grid-template-columns: 1fr; }
+}
+
+/* 狭い画面（スマホ等）: サイドバー・キャンバス・一覧パネルの3カラムを縦積みにする */
+@media (max-width: 680px) {
+  .map-view, .graph-view {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .map-sidebar, .search-sidebar, .detail-panel, .map-list-panel {
+    width: 100%;
+    max-height: 38vh;
+    border-right: none;
+    border-left: none;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .map-canvas, .ego-canvas {
+    min-height: 320px;
+    flex-shrink: 0;
+  }
+  .overlay-stack-left, .graph-settings, .truncated-note {
+    max-width: calc(100% - 24px);
+  }
+  .breadcrumb-item, .breadcrumb-current { max-width: 90px; }
+  .table-controls { flex-direction: column; align-items: stretch; }
+  .table-controls .table-count { margin-left: 0; }
+  .paper-row, .bar-row { grid-template-columns: 1fr; }
+  .relation-table-view { flex-direction: column; }
+  .data-table { font-size: 11px; }
 }
