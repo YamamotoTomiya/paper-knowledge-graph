@@ -15,6 +15,7 @@ const SEARCH_HIT_LIMIT = 25;
 const SEARCH_CONTEXT_PER_HIT = 5;
 const SEARCH_ENTITIES_PER_HIT = 6;
 const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
+const LIST_PAGE_SIZE = 50;
 
 function useDebouncedValue(value, delay) {
   const [debounced, setDebounced] = useState(value);
@@ -164,6 +165,8 @@ export default function GlobalMap({ onOpenPaper }) {
   const [minDegree, setMinDegree] = useState(1);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
   const [showEntities, setShowEntities] = useState(true);
+  const [showList, setShowList] = useState(true);
+  const [listPage, setListPage] = useState(0);
   const [query, setQuery] = useState('');
   // グラフの再構築は毎回の入力・スライダー操作のたびに行わず、操作が止まってから行う。
   // 毎回作り直すとForceGraph2Dが完全新規データとして扱い、ノード位置がリセットされて
@@ -192,7 +195,18 @@ export default function GlobalMap({ onOpenPaper }) {
   );
 
   // 選択中ノードに直接つながるノードだけの集合（他を減光するため）。データが変わったら選択解除。
-  useEffect(() => { setSelectedId(null); }, [data]);
+  useEffect(() => { setSelectedId(null); setListPage(0); }, [data]);
+
+  // いま地図上に表示されている論文の一覧（右パネル用）。検索中は一致優先→スコア順、
+  // 通常時は類似論文数（degree）順（＝円の大きさの順）で並べる。
+  const paperList = useMemo(() => {
+    const papers = data.nodes.filter((n) => n.kind === 'paper');
+    return papers.sort((a, b) => (
+      isSearching ? (b.matched - a.matched) || (b.score - a.score) : b.degree - a.degree
+    ));
+  }, [data, isSearching]);
+  const listPageCount = Math.max(1, Math.ceil(paperList.length / LIST_PAGE_SIZE));
+  const listPageItems = paperList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
   const connectedIds = useMemo(() => {
     if (!selectedId) return null;
     const set = new Set([selectedId]);
@@ -305,10 +319,25 @@ export default function GlobalMap({ onOpenPaper }) {
 
   const onBackgroundClick = useCallback(() => setSelectedId(null), []);
 
+  // 右の一覧からノードを選ぶと、マップ側でも同じノードを選択（強調表示）し、その位置へ視点を移動する
+  const onListItemSelect = useCallback((node) => {
+    setSelectedId((prev) => (prev === node.id ? null : node.id));
+    const fg = fgRef.current;
+    if (fg && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      fg.centerAt(node.x, node.y, 400);
+      fg.zoom(4, 400);
+    }
+  }, []);
+
   return (
     <div className="map-view">
       <aside className="map-sidebar" aria-label="全体マップの説明・検索・フィルタ">
-        <h2>論文のつながりを俯瞰する</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+          <h2>論文のつながりを俯瞰する</h2>
+          <button className="btn" style={{ padding: '3px 10px', fontSize: 11 }} onClick={() => setShowList((v) => !v)}>
+            {showList ? '一覧を隠す' : '一覧を表示'}
+          </button>
+        </div>
         <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。クリックでつながっているノードだけ強調表示、ダブルクリックでその論文を中心に関係グラフを開きます。</p>
         {selectedId && (
           <p className="control-note">
@@ -454,6 +483,45 @@ export default function GlobalMap({ onOpenPaper }) {
           </div>
         )}
       </div>
+      {showList && (
+        <aside className="map-list-panel" aria-label="表示中の論文一覧">
+          <div className="map-list-header">
+            <h3>表示中の一覧</h3>
+            <span className="table-count">{paperList.length.toLocaleString()} 件</span>
+          </div>
+          <p className="control-note">クリックでマップ上のその論文を選択・拡大します。</p>
+          <div className="map-list-items">
+            {listPageItems.map((p) => (
+              <button
+                key={p.id}
+                className={`map-list-row${p.id === selectedId ? ' active' : ''}`}
+                onClick={() => onListItemSelect(p)}
+              >
+                <span className="paper-row-cat" style={{ color: CATEGORY_TEXT_COLORS[p.category] }}>
+                  {CATEGORIES[p.category] ?? p.category}
+                </span>
+                <span className="map-list-title">{p.title}</span>
+                <span className="map-list-meta">score {p.score} · 類似論文{p.degree}件</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="link-cell map-list-open"
+                  onClick={(e) => { e.stopPropagation(); onOpenPaper(p.id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onOpenPaper(p.id); } }}
+                >
+                  関係グラフを開く ↗
+                </span>
+              </button>
+            ))}
+            {!listPageItems.length && <p className="detail-empty">表示中の論文がありません</p>}
+          </div>
+          <div className="table-pagination">
+            <button disabled={listPage === 0} onClick={() => setListPage((p) => p - 1)}>← 前へ</button>
+            <span>{listPage + 1} / {listPageCount}</span>
+            <button disabled={listPage >= listPageCount - 1} onClick={() => setListPage((p) => p + 1)}>次へ →</button>
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
