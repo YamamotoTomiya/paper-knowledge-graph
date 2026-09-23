@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, PAPERS, PAPER_GLOBAL_GRAPH, neighborsOf, searchPapers } from '../data/graph.js';
+import {
+  CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH,
+  neighborsOf, nodeKey, nodeName, searchPapers,
+} from '../data/graph.js';
 
 // JP_Market_Vis の全体マップ（白い円+業種色の縁、円の大きさ=関係数）を踏襲。
 // ノード=論文（SIMILAR_TOを持つものだけ）、縁の色=カテゴリ、大きさ=SIMILAR_TO本数(degree)。
@@ -9,6 +12,22 @@ const AVAILABLE_CATEGORIES = Object.keys(CATEGORIES);
 const DEFAULT_MAX_NODES = 1500;
 const SEARCH_HIT_LIMIT = 25;
 const SEARCH_CONTEXT_PER_HIT = 5;
+const SEARCH_ENTITIES_PER_HIT = 6;
+const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
+
+// ノード上部にホバー時のラベル（白背景付き）を描く共通処理。offsetY=ノード上端からの距離
+function drawHoverLabel(ctx, node, offsetY, scale, text) {
+  ctx.font = `600 ${12 / scale}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  const label = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  const y = node.y - offsetY;
+  const w = ctx.measureText(label).width + 8 / scale;
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  ctx.fillRect(node.x - w / 2, y - 12 / scale, w, 14 / scale);
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(label, node.x, y);
+}
 
 function filterGraph(activeCategories, minDegree, maxNodes) {
   let nodes = PAPER_GLOBAL_GRAPH.nodes.filter(
@@ -23,38 +42,64 @@ function filterGraph(activeCategories, minDegree, maxNodes) {
   return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length) };
 }
 
-// キーワードに一致した論文＋その類似論文（文脈）だけで構成する部分グラフを作る。
-// 一致論文だけだと互いに孤立した点の羅列になりがちなので、SIMILAR_TOで繋がる周辺も
-// 少数加えて「関連する論文のナレッジグラフ」として見えるようにする。
+// キーワードに一致した論文＋その類似論文（文脈）＋一致論文が扱うConcept/Method/Representation
+// で構成する部分グラフを作る。一致論文だけだと互いに孤立した点の羅列になりがちなので、
+// SIMILAR_TOで繋がる周辺論文と、論文が実際に何を扱っているか（コンセプト等）を合わせて見せる
+// ことで「関連する論文のナレッジグラフ」として見えるようにする。
 function buildSearchGraph(query, maxNodes) {
   const hits = searchPapers(query, SEARCH_HIT_LIMIT);
-  const nodeMap = new Map(); // url -> node
-  const addNode = (url, matched) => {
+  const nodeMap = new Map(); // id (url or "kind:name") -> node
+  const addPaper = (url, matched) => {
     const p = PAPERS[url];
     if (!p) return;
     const existing = nodeMap.get(url);
     if (existing) { existing.matched = existing.matched || matched; return; }
     const degree = neighborsOf({ kind: 'paper', key: url }).filter((n) => n.other.kind === 'paper').length;
-    nodeMap.set(url, { id: url, title: p.title, category: p.category || 'uncategorized', score: p.score, degree, matched });
+    nodeMap.set(url, { id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', score: p.score, degree, matched });
   };
-  for (const { url } of hits) addNode(url, true);
+  for (const { url } of hits) addPaper(url, true);
   for (const { url } of hits) {
     const nbs = neighborsOf({ kind: 'paper', key: url })
       .filter((n) => n.other.kind === 'paper')
       .sort((a, b) => (b.relation.score ?? 0) - (a.relation.score ?? 0))
       .slice(0, SEARCH_CONTEXT_PER_HIT);
-    for (const nb of nbs) addNode(nb.other.key, false);
+    for (const nb of nbs) addPaper(nb.other.key, false);
   }
+
+  // 一致論文が扱うConcept/Method/Representationも加える（graph_app.py の検索結果グラフに
+  // Concept/Method/Representationノードを含めていたのと同じ考え方）
+  const entityLinks = []; // {source: paperUrl, target: entityId}
+  for (const { url } of hits) {
+    const entityNbs = neighborsOf({ kind: 'paper', key: url })
+      .filter((n) => n.other.kind !== 'paper')
+      .slice(0, SEARCH_ENTITIES_PER_HIT);
+    for (const nb of entityNbs) {
+      const id = nodeKey(nb.other);
+      if (!nodeMap.has(id)) {
+        nodeMap.set(id, { id, kind: nb.other.kind, title: nodeName(nb.other), degree: 1, matched: true });
+      } else {
+        nodeMap.get(id).degree += 1;
+      }
+      entityLinks.push({ source: url, target: id, entityKind: nb.other.kind });
+    }
+  }
+
   let nodes = [...nodeMap.values()];
   const totalMatching = nodes.length;
   if (nodes.length > maxNodes) {
-    nodes.sort((a, b) => (b.matched - a.matched) || (b.degree - a.degree));
+    // 論文（一致→文脈の順）を優先して残し、Concept/Method/Representationは次点で間引く
+    const rank = (n) => (n.kind !== 'paper' ? 2 : n.matched ? 0 : 1);
+    nodes.sort((a, b) => rank(a) - rank(b) || (b.degree - a.degree));
     nodes = nodes.slice(0, maxNodes);
   }
   const ids = new Set(nodes.map((n) => n.id));
-  const links = PAPER_GLOBAL_GRAPH.links.filter(
+  const similarLinks = PAPER_GLOBAL_GRAPH.links.filter(
     (l) => ids.has(l.source.id ?? l.source) && ids.has(l.target.id ?? l.target),
   );
+  const links = [
+    ...similarLinks.map((l) => ({ source: l.source.id ?? l.source, target: l.target.id ?? l.target, kind: 'similar' })),
+    ...entityLinks.filter((l) => ids.has(l.source) && ids.has(l.target)).map((l) => ({ ...l, kind: 'entity' })),
+  ];
   return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length), hitCount: hits.length };
 }
 
@@ -102,12 +147,30 @@ export default function GlobalMap({ onOpenPaper }) {
     return next;
   });
 
+  const nodeGeometry = useCallback((node, hover) => {
+    if (node.kind !== 'paper') {
+      const s = (hover ? 9 : 6.5) * 2; // 正方形の一辺
+      return { isEntity: true, s, color: ENTITY_COLOR[node.kind] ?? '#94a3b8' };
+    }
+    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
+    return { isEntity: false, r, color: CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8' };
+  }, [isSearching]);
+
   const drawNode = useCallback((node, ctx, scale) => {
     const hover = node === hoverRef.current;
-    const color = CATEGORY_TEXT_COLORS[node.category] ?? '#94a3b8';
-    // 検索中は「一致した論文」を塗りつぶし、「文脈として加えた周辺の論文」は薄い白丸のままにする
+    const geo = nodeGeometry(node, hover);
+    const color = geo.color;
+
+    if (geo.isEntity) {
+      // Concept/Method/Representation は論文（円）と区別するため正方形で描く
+      ctx.fillStyle = color;
+      ctx.fillRect(node.x - geo.s / 2, node.y - geo.s / 2, geo.s, geo.s);
+      if (hover) drawHoverLabel(ctx, node, geo.s / 2 + 4 / scale, scale, `${ENTITY_LABELS[node.kind] ?? node.kind}: ${node.title}`);
+      return;
+    }
+
     const isContextOnly = isSearching && node.matched === false;
-    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
+    const r = geo.r;
     if (!hover && r * scale < 1.6) {
       ctx.beginPath();
       ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
@@ -124,36 +187,30 @@ export default function GlobalMap({ onOpenPaper }) {
     ctx.strokeStyle = color;
     ctx.stroke();
     ctx.globalAlpha = 1;
-    if (hover) {
-      ctx.font = `600 ${12 / scale}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillStyle = '#0f172a';
-      const label = node.title.length > 60 ? `${node.title.slice(0, 60)}…` : node.title;
-      const y = node.y - r - 4 / scale;
-      const w = ctx.measureText(label).width + 8 / scale;
-      ctx.fillStyle = 'rgba(255,255,255,.92)';
-      ctx.fillRect(node.x - w / 2, y - 12 / scale, w, 14 / scale);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillText(label, node.x, y);
-    }
-  }, [isSearching]);
+    if (hover) drawHoverLabel(ctx, node, r + 4 / scale, scale, node.title);
+  }, [isSearching, nodeGeometry]);
 
   const paintPointerArea = useCallback((node, color, ctx) => {
     const hover = node === hoverRef.current;
-    const r = nodeRadius(node.degree) * (hover ? 1.4 : 1) * (isSearching && node.matched ? 1.3 : 1);
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+    const geo = nodeGeometry(node, hover);
     ctx.fillStyle = color;
-    ctx.fill();
-  }, [isSearching]);
+    if (geo.isEntity) {
+      ctx.fillRect(node.x - geo.s / 2, node.y - geo.s / 2, geo.s, geo.s);
+    } else {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, geo.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [nodeGeometry]);
 
   const onNodeHover = useCallback((node) => {
     hoverRef.current = node || null;
     setHoverNode(node || null);
   }, []);
 
-  const onNodeClick = useCallback((node) => onOpenPaper(node.id), [onOpenPaper]);
+  const onNodeClick = useCallback((node) => {
+    if (node.kind === 'paper') onOpenPaper(node.id);
+  }, [onOpenPaper]);
 
   return (
     <div className="map-view">
@@ -161,8 +218,11 @@ export default function GlobalMap({ onOpenPaper }) {
         <h2>論文のつながりを俯瞰する</h2>
         <p>円1つ=論文1本。白い円の縁の色=カテゴリ、大きさ=類似論文の本数。クリックするとその論文を中心に関係グラフが開きます。</p>
         <div className="map-totals" aria-live="polite">
-          <div><strong>{data.nodes.length.toLocaleString()}</strong><span>表示中の論文</span></div>
-          <div><strong>{data.links.length.toLocaleString()}</strong><span>表示中の類似関係</span></div>
+          <div><strong>{data.nodes.filter((n) => n.kind === 'paper').length.toLocaleString()}</strong><span>表示中の論文</span></div>
+          <div><strong>{data.links.length.toLocaleString()}</strong><span>表示中の関係</span></div>
+          {isSearching && (
+            <div><strong>{data.nodes.filter((n) => n.kind !== 'paper').length.toLocaleString()}</strong><span>コンセプト等</span></div>
+          )}
         </div>
         <section className="control-section">
           <label htmlFor="map-search">論文を検索</label>
@@ -173,9 +233,14 @@ export default function GlobalMap({ onOpenPaper }) {
           {isSearching && (
             <>
               <p className="control-note">
-                濃い円=一致した論文（{data.hitCount ?? 0}件）、薄い円=それらの類似論文（文脈として表示）。
-                クリックで関係グラフを開きます。
+                濃い円=一致した論文（{data.hitCount ?? 0}件）、薄い円=それらの類似論文（文脈として表示）、
+                四角=一致論文が扱うConcept/Method/Representation。クリックで関係グラフを開きます。
               </p>
+              <div className="legend">
+                <span><i style={{ borderColor: ENTITY_COLOR.concept }} />コンセプト</span>
+                <span><i style={{ borderColor: ENTITY_COLOR.method }} />手法</span>
+                <span><i style={{ borderColor: ENTITY_COLOR.representation }} />表現形式</span>
+              </div>
               <div className="search-results" aria-live="polite">
                 {results.map(({ url, paper }) => (
                   <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
@@ -225,11 +290,13 @@ export default function GlobalMap({ onOpenPaper }) {
           graphData={data}
           backgroundColor="#ffffff"
           nodeId="id"
-          nodeLabel={(n) => `${n.title} · score ${n.score} · 類似論文${n.degree}件`}
+          nodeLabel={(n) => (n.kind === 'paper'
+            ? `${n.title} · score ${n.score} · 類似論文${n.degree}件`
+            : `${ENTITY_LABELS[n.kind] ?? n.kind}: ${n.title}`)}
           nodeCanvasObject={drawNode}
           nodePointerAreaPaint={paintPointerArea}
-          linkColor={() => 'rgba(148,163,184,0.35)'}
-          linkWidth={0.6}
+          linkColor={(l) => (l.kind === 'entity' ? `${ENTITY_COLOR[l.entityKind] ?? '#94a3b8'}55` : 'rgba(148,163,184,0.35)')}
+          linkWidth={(l) => (l.kind === 'entity' ? 0.8 : 0.6)}
           onNodeHover={onNodeHover}
           onNodeClick={onNodeClick}
           onEngineStop={onEngineStop}
@@ -244,10 +311,16 @@ export default function GlobalMap({ onOpenPaper }) {
             <span>{isSearching ? '別のキーワードを試してください。' : 'カテゴリを選択するか、最小類似論文数を下げてください。'}</span>
           </div>
         )}
-        {hoverNode && (
+        {hoverNode && hoverNode.kind === 'paper' && (
           <div className="map-hover">
             <strong>{hoverNode.title}</strong>
             <small>{CATEGORIES[hoverNode.category] ?? hoverNode.category} · score {hoverNode.score} · 類似論文 {hoverNode.degree}件</small>
+          </div>
+        )}
+        {hoverNode && hoverNode.kind !== 'paper' && (
+          <div className="map-hover">
+            <strong>{hoverNode.title}</strong>
+            <small>{ENTITY_LABELS[hoverNode.kind] ?? hoverNode.kind} · {hoverNode.degree}件の論文と接続</small>
           </div>
         )}
       </div>

@@ -95,7 +95,7 @@ export const PAPER_GLOBAL_GRAPH = (() => {
   for (const [url, d] of degree) {
     const p = PAPERS[url];
     if (!p) continue;
-    nodes.push({ id: url, title: p.title, category: p.category || 'uncategorized', score: p.score, degree: d });
+    nodes.push({ id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', score: p.score, degree: d });
   }
   return { nodes, links };
 })();
