@@ -113,8 +113,16 @@ export default function GlobalMap({ onOpenPaper }) {
   const [minDegree, setMinDegree] = useState(1);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
   const [query, setQuery] = useState('');
-  const isSearching = query.trim().length > 0;
-  const results = useMemo(() => (isSearching ? searchPapers(query, 12) : []), [isSearching, query]);
+  // グラフの再構築はキー入力のたびに行わず、入力が止まってから行う。
+  // 毎キー入力でグラフを作り直すとForceGraph2Dが完全新規データとして扱い、
+  // ノード位置がリセットされて画面がちらつく（エッジが点滅して見える）ため。
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 350);
+    return () => clearTimeout(t);
+  }, [query]);
+  const isSearching = debouncedQuery.trim().length > 0;
+  const results = useMemo(() => (isSearching ? searchPapers(debouncedQuery, 12) : []), [isSearching, debouncedQuery]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -126,8 +134,8 @@ export default function GlobalMap({ onOpenPaper }) {
   }, []);
 
   const data = useMemo(
-    () => (isSearching ? buildSearchGraph(query, maxNodes) : filterGraph(activeCategories, minDegree, maxNodes)),
-    [isSearching, query, activeCategories, minDegree, maxNodes],
+    () => (isSearching ? buildSearchGraph(debouncedQuery, maxNodes) : filterGraph(activeCategories, minDegree, maxNodes)),
+    [isSearching, debouncedQuery, activeCategories, minDegree, maxNodes],
   );
 
   useEffect(() => {
@@ -228,7 +236,7 @@ export default function GlobalMap({ onOpenPaper }) {
           <label htmlFor="map-search">論文を検索</label>
           <div className="search-input-row">
             <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {isSearching && <button className="btn" onClick={() => setQuery('')}>✕</button>}
+            {isSearching && <button className="btn" onClick={() => { setQuery(''); setDebouncedQuery(''); }}>✕</button>}
           </div>
           {isSearching && (
             <>
