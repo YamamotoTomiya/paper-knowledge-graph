@@ -48,14 +48,24 @@ export function useForceLayout(nodes, edges) {
     for (let i = 0; i < WARMUP_TICKS; i += 1) sim.tick();
     applyPositions();
 
+    // シミュレーション自体は毎フレーム進めるが、React側のstate更新（=全ノードのReact Flow
+    // への再コミット）は間引く。DOM/SVGベースのReact Flowは、canvas一枚に描くだけの全体マップと
+    // 違ってノード・エッジそれぞれがDOM要素なので、60fps全部で毎回コミットすると重くなり動きが
+    // カクつく。更新間隔とCSS側のtransition時間（styles.cssの.react-flow__node）を合わせることで、
+    // 間引いても滑らかに見えるようにしている。
+    const UPDATE_EVERY_N_FRAMES = 3;
     let frame = null;
+    let frameCount = 0;
     const start = performance.now();
     const tick = () => {
       sim.tick();
-      applyPositions();
+      frameCount += 1;
+      if (frameCount % UPDATE_EVERY_N_FRAMES === 0) applyPositions();
       const elapsed = performance.now() - start;
       if (sim.alpha() > sim.alphaMin() && elapsed < COOLDOWN_MS) {
         frame = requestAnimationFrame(tick);
+      } else {
+        applyPositions();
       }
     };
     frame = requestAnimationFrame(tick);

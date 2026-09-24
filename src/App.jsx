@@ -126,7 +126,12 @@ function GraphView({ centerRef, setCenterRef }) {
   const selectedNodeId = selection?.kind === 'node' ? nodeKey(selection.ref) : null;
   const highlightNodeId = hoveredNodeId ?? selectedNodeId;
 
-  const displayNodes = useMemo(() => {
+  // dataオブジェクトの再生成はhighlightNodeIdが変わった時だけにし、力学シミュレーションの
+  // 毎フレーム更新（forcePositions）ではposition/measuredだけを差し替えてdataの参照は
+  // 維持する。dataの参照が毎フレーム変わると、ReactFlowが全ノードのカスタムコンポーネントを
+  // 毎フレーム再レンダリングしてしまい、全体マップ（canvas再描画のみ）に比べて動きがカクつく
+  // 原因になるため（全体マップとの滑らかさの違いはこれが主因）。
+  const nodesWithData = useMemo(() => {
     const connected = new Set([highlightNodeId]);
     if (highlightNodeId) {
       for (const e of edges) {
@@ -136,11 +141,15 @@ function GraphView({ centerRef, setCenterRef }) {
     }
     return nodes.map((n) => ({
       ...n,
-      position: dragOverrides[n.id] ?? forcePositions[n.id] ?? n.position,
-      measured: measured[n.id],
       data: { ...n.data, dimmed: highlightNodeId ? !connected.has(n.id) : false },
     }));
-  }, [nodes, edges, highlightNodeId, measured, forcePositions, dragOverrides]);
+  }, [nodes, edges, highlightNodeId]);
+
+  const displayNodes = useMemo(() => nodesWithData.map((n) => ({
+    ...n,
+    position: dragOverrides[n.id] ?? forcePositions[n.id] ?? n.position,
+    measured: measured[n.id],
+  })), [nodesWithData, measured, forcePositions, dragOverrides]);
 
   // 強調中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
   const hoverNodeEdgeCount = useMemo(

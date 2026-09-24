@@ -218,6 +218,10 @@ input[type="range"] { width: 100%; }
 /* --- Graph view --- */
 .graph-view { display: flex; flex: 1; min-height: 0; width: 100%; }
 .ego-canvas { flex: 1; position: relative; min-width: 0; }
+/* 力学シミュレーションのstate更新を間引く分、CSS側で補間して滑らかに見せる
+   （useForceLayout.jsのUPDATE_EVERY_N_FRAMESと時間を揃えている）。ドラッグ中は
+   ポインタに追従させたいのでtransitionを外す。 */
+.react-flow__node:not(.dragging) { transition: transform 135ms linear; }
 .overlay-box {
   position: absolute;
   z-index: 10;

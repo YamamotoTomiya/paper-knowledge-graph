@@ -24,7 +24,7 @@ function BaseNode({ children, style, dimmed }) {
   );
 }
 
-function CenterNode({ data }) {
+const CenterNode = React.memo(function CenterNode({ data }) {
   const isPaper = data.kind === 'paper';
   const color = isPaper ? (CATEGORY_TEXT_COLORS[data.category] ?? '#0f172a') : '#0f172a';
   const kindLabel = isPaper ? 'この論文' : `この${ENTITY_LABELS[data.kind] ?? data.kind}`;
@@ -35,11 +35,11 @@ function CenterNode({ data }) {
       {data.score != null && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>score {data.score}</div>}
     </BaseNode>
   );
-}
+});
 
 // 全体マップの論文ノードと同じ「円だけ」の見た目にする（カード表示だとタイトルが密集して
 // 読みにくいため）。タイトルはホバー時にだけ吹き出しで表示する。
-function PaperNode({ data }) {
+const PaperNode = React.memo(function PaperNode({ data }) {
   const color = CATEGORY_TEXT_COLORS[data.category] ?? '#0369a1';
   const size = data.indirect ? 9 : 15;
   return (
@@ -63,15 +63,15 @@ function PaperNode({ data }) {
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
     </div>
   );
-}
+});
 
-function EntityNode({ data }) {
+const EntityNode = React.memo(function EntityNode({ data }) {
   return (
     <BaseNode style={{ border: '1px dashed #94a3b8', background: '#f8fafc' }} dimmed={data.dimmed}>
       <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase' }}>{ENTITY_LABELS[data.kind] ?? data.kind}</div>
       {data.label}
     </BaseNode>
   );
-}
+});
 
 export const nodeTypes = { center: CenterNode, paper: PaperNode, entity: EntityNode };
