@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_ENTRIES, neighborsOf, searchPapers } from '../data/graph.js';
-import { preloadSemanticSearch, searchEntitiesBySimilarity, searchPapersBySimilarity } from '../data/semanticSearch.js';
+import { CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPER_ENTRIES, searchPapers } from '../data/graph.js';
+import { preloadSemanticSearch, semanticSearchPapers } from '../data/semanticSearch.js';
 
 const BASE_URL = import.meta.env?.BASE_URL ?? '/';
 const DEFAULT_LIMIT = 20;
@@ -8,38 +8,6 @@ const DEFAULT_THRESHOLD = 0.55;
 // キーワード未入力時に出すランキング（JP_Market_Vis の SearchSidebar が空欄時に
 // 関係数ランキングを出すのと同じ考え方。こちらはスコア順）
 const SCORE_RANKING = [...PAPER_ENTRIES].sort((a, b) => b.score - a.score).slice(0, 40);
-
-// 意味検索: (1) クエリに近いConcept/Method/Representationを探し、それらと繋がる論文
-// （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）と、
-// (2) クエリに近い論文タイトル・abstractそのもの、の両方を検索して類似度で1本にまとめる。
-async function semanticSearchPapers(query, { threshold, limit }) {
-  const [entityHits, paperHits] = await Promise.all([
-    searchEntitiesBySimilarity(BASE_URL, query, { threshold, limit: 40 }),
-    searchPapersBySimilarity(BASE_URL, query, { threshold, limit: 60 }),
-  ]);
-  const bestByPaper = new Map(); // url -> { similarity, source, entityName?, entityKind? }
-  for (const hit of entityHits) {
-    const neighbors = neighborsOf({ kind: hit.kind, key: hit.normalized_name });
-    for (const { other } of neighbors) {
-      if (other.kind !== 'paper') continue;
-      const prev = bestByPaper.get(other.key);
-      if (!prev || hit.similarity > prev.similarity) {
-        bestByPaper.set(other.key, { similarity: hit.similarity, source: 'entity', entityName: hit.name, entityKind: hit.kind });
-      }
-    }
-  }
-  for (const hit of paperHits) {
-    const prev = bestByPaper.get(hit.url);
-    if (!prev || hit.similarity > prev.similarity) {
-      bestByPaper.set(hit.url, { similarity: hit.similarity, source: 'paper' });
-    }
-  }
-  const rows = [...bestByPaper.entries()]
-    .map(([url, match]) => ({ url, paper: PAPERS[url], match }))
-    .filter((r) => r.paper)
-    .sort((a, b) => b.match.similarity - a.match.similarity || b.paper.score - a.paper.score);
-  return { rows: rows.slice(0, limit), entityHitCount: entityHits.length, paperHitCount: paperHits.length };
-}
 
 export default function SearchSidebar({ selectedUrl, onSelect }) {
   const [mode, setMode] = useState('text'); // 'text' | 'semantic'
@@ -62,7 +30,7 @@ export default function SearchSidebar({ selectedUrl, onSelect }) {
     if (!query.trim()) return;
     setSemanticState((s) => ({ ...s, status: 'loading' }));
     try {
-      const { rows, entityHitCount, paperHitCount } = await semanticSearchPapers(query, { threshold, limit });
+      const { rows, entityHitCount, paperHitCount } = await semanticSearchPapers(BASE_URL, query, { threshold, limit });
       setSemanticState({ status: 'done', rows, entityHitCount, paperHitCount });
     } catch (err) {
       setSemanticState({ status: 'error', rows: [], entityHitCount: 0, paperHitCount: 0, message: err.message });

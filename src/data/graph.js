@@ -113,16 +113,48 @@ export const PAPER_GLOBAL_GRAPH = (() => {
   return { nodes, links };
 })();
 
+export const SLACK_STATUS_JA = {
+  posted: '共有済み',
+  not_attempted: '未対応',
+  webhook_not_set: 'Webhook未設定',
+};
+
 export const STATS = (() => {
   const byCategory = {};
   const byTopic = {};
+  const byRelationType = {};
+  const byScore = {};
+  const byWeek = {};
+  const bySource = {};
+  const bySlackStatus = {};
+  const categoryScoreSum = {};
+  const categoryScoreCount = {};
   let totalScore = 0;
+  let extractedCount = 0;
+
   for (const p of PAPER_ENTRIES) {
     const cat = p.category || 'uncategorized';
     byCategory[cat] = (byCategory[cat] ?? 0) + 1;
     if (p.topic_id) byTopic[p.topic_id] = (byTopic[p.topic_id] ?? 0) + 1;
     totalScore += p.score || 0;
+    byScore[p.score] = (byScore[p.score] ?? 0) + 1;
+    if (p.yw) byWeek[p.yw] = (byWeek[p.yw] ?? 0) + 1;
+    const src = p.source || 'unknown';
+    bySource[src] = (bySource[src] ?? 0) + 1;
+    const slack = p.slack_status || 'not_attempted';
+    bySlackStatus[slack] = (bySlackStatus[slack] ?? 0) + 1;
+    categoryScoreSum[cat] = (categoryScoreSum[cat] ?? 0) + (p.score || 0);
+    categoryScoreCount[cat] = (categoryScoreCount[cat] ?? 0) + 1;
+    if (p.extraction_summary) extractedCount += 1;
   }
+  for (const rel of RELATIONS) {
+    byRelationType[rel.type] = (byRelationType[rel.type] ?? 0) + 1;
+  }
+  const avgScoreByCategory = {};
+  for (const cat of Object.keys(categoryScoreSum)) {
+    avgScoreByCategory[cat] = categoryScoreSum[cat] / categoryScoreCount[cat];
+  }
+
   return {
     papers: PAPER_ENTRIES.length,
     topics: Object.keys(TOPICS).length,
@@ -131,8 +163,15 @@ export const STATS = (() => {
     representations: Object.keys(REPRESENTATIONS).length,
     relations: RELATIONS.length,
     avgScore: PAPER_ENTRIES.length ? totalScore / PAPER_ENTRIES.length : 0,
+    extractionCoverage: PAPER_ENTRIES.length ? extractedCount / PAPER_ENTRIES.length : 0,
     byCategory,
     byTopic,
+    byRelationType,
+    byScore,
+    byWeek,
+    bySource,
+    bySlackStatus,
+    avgScoreByCategory,
   };
 })();
 

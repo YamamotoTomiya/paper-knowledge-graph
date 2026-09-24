@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from 'd3-force';
 
-const MAX_TICKS = 240; // 全体マップ(cooldownTime=3000ms)と同程度で頭打ちにする
+// 全体マップ（react-force-graph-2d）の warmupTicks={30} / cooldownTime={3000} と
+// 同じタイミングにする。alphaDecay/alphaMin/velocityDecayもd3-forceの既定値のまま
+// （どちらも上書きしていない）にして、力学シミュレーションの「動き方」を揃える。
+const WARMUP_TICKS = 30;
+const COOLDOWN_MS = 3000;
 
 // 関係グラフ（エゴネットワーク）に、全体マップと同じような力学シミュレーションでの
 // 自然な動き（反発・リンクによる引き合い・衝突回避）を持たせる。
@@ -27,7 +31,6 @@ export function useForceLayout(nodes, edges) {
       .force('link', forceLink(simLinks).id((d) => d.id).distance(150).strength(0.55))
       .force('collide', forceCollide((d) => (d.isCenter ? 90 : 60)))
       .force('center', forceCenter(0, 0).strength(0.02))
-      .alphaDecay(0.025)
       .stop();
 
     const applyPositions = () => {
@@ -35,15 +38,20 @@ export function useForceLayout(nodes, edges) {
       for (const n of simNodes) next[n.id] = { x: n.x, y: n.y };
       setPositions(next);
     };
-    applyPositions(); // まずセクター配置をそのまま反映し、初期表示にラグが出ないようにする
+
+    // 全体マップのwarmupTicksと同じく、最初の数十ティックはまとめて計算してから描画する
+    // （1ティックずつ描くと初動がだらだら長く見え、マップの「パッと大まかな形になってから
+    // 微調整で落ち着く」動きと違って見えるため）。
+    for (let i = 0; i < WARMUP_TICKS; i += 1) sim.tick();
+    applyPositions();
 
     let frame = null;
-    let tickCount = 0;
+    const start = performance.now();
     const tick = () => {
       sim.tick();
-      tickCount += 1;
       applyPositions();
-      if (sim.alpha() > sim.alphaMin() && tickCount < MAX_TICKS) {
+      const elapsed = performance.now() - start;
+      if (sim.alpha() > sim.alphaMin() && elapsed < COOLDOWN_MS) {
         frame = requestAnimationFrame(tick);
       }
     };

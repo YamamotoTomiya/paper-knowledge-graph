@@ -4,6 +4,9 @@ import {
   CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH, TOPICS, TOPIC_COLORS,
   neighborsOf, nodeKey, nodeName, searchPapers,
 } from '../data/graph.js';
+import { preloadSemanticSearch, semanticSearchPapers } from '../data/semanticSearch.js';
+
+const BASE_URL = import.meta.env?.BASE_URL ?? '/';
 
 // JP_Market_Vis の全体マップ（白い円+業種色の縁、円の大きさ=関係数）を踏襲。
 // ノード=論文（SIMILAR_TOを持つものだけ）、縁の色=カテゴリ、大きさ=SIMILAR_TO本数(degree)。
@@ -96,12 +99,12 @@ function filterGraph(activeCategories, minDegree, maxNodes, showEntities, topicF
   };
 }
 
-// キーワードに一致した論文＋その類似論文（文脈）＋一致論文が扱うConcept/Method/Representation
-// で構成する部分グラフを作る。一致論文だけだと互いに孤立した点の羅列になりがちなので、
-// SIMILAR_TOで繋がる周辺論文と、論文が実際に何を扱っているか（コンセプト等）を合わせて見せる
-// ことで「関連する論文のナレッジグラフ」として見えるようにする。
-function buildSearchGraph(query, maxNodes) {
-  const hits = searchPapers(query, SEARCH_HIT_LIMIT);
+// 一致した論文（urls, 関連度順）＋その類似論文（文脈）＋一致論文が扱うConcept/Method/
+// Representationで構成する部分グラフを作る。一致論文だけだと互いに孤立した点の羅列に
+// なりがちなので、SIMILAR_TOで繋がる周辺論文と、論文が実際に何を扱っているか
+// （コンセプト等）を合わせて見せることで「関連する論文のナレッジグラフ」として見えるように
+// する。キーワード検索（部分一致）・意味検索（埋め込み類似度）のどちらの結果も同じ形で使える。
+function buildSearchGraphFromUrls(urls, maxNodes) {
   const nodeMap = new Map(); // id (url or "kind:name") -> node
   const addPaper = (url, matched) => {
     const p = PAPERS[url];
@@ -111,8 +114,8 @@ function buildSearchGraph(query, maxNodes) {
     const degree = neighborsOf({ kind: 'paper', key: url }).filter((n) => n.other.kind === 'paper').length;
     nodeMap.set(url, { id: url, kind: 'paper', title: p.title, category: p.category || 'uncategorized', topicId: p.topic_id ?? null, score: p.score, degree, matched });
   };
-  for (const { url } of hits) addPaper(url, true);
-  for (const { url } of hits) {
+  for (const url of urls) addPaper(url, true);
+  for (const url of urls) {
     const nbs = neighborsOf({ kind: 'paper', key: url })
       .filter((n) => n.other.kind === 'paper')
       .sort((a, b) => (b.relation.score ?? 0) - (a.relation.score ?? 0))
@@ -123,7 +126,7 @@ function buildSearchGraph(query, maxNodes) {
   // 一致論文が扱うConcept/Method/Representationも加える（graph_app.py の検索結果グラフに
   // Concept/Method/Representationノードを含めていたのと同じ考え方）
   const entityLinks = []; // {source: paperUrl, target: entityId}
-  for (const { url } of hits) {
+  for (const url of urls) {
     const entityNbs = neighborsOf({ kind: 'paper', key: url })
       .filter((n) => n.other.kind !== 'paper')
       .slice(0, SEARCH_ENTITIES_PER_HIT);
@@ -154,7 +157,11 @@ function buildSearchGraph(query, maxNodes) {
     ...similarLinks.map((l) => ({ source: l.source.id ?? l.source, target: l.target.id ?? l.target, kind: 'similar' })),
     ...entityLinks.filter((l) => ids.has(l.source) && ids.has(l.target)).map((l) => ({ ...l, kind: 'entity' })),
   ];
-  return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length), hitCount: hits.length };
+  return { nodes, links, truncated: Math.max(0, totalMatching - nodes.length), hitCount: urls.length };
+}
+
+function buildSearchGraph(query, maxNodes) {
+  return buildSearchGraphFromUrls(searchPapers(query, SEARCH_HIT_LIMIT).map((h) => h.url), maxNodes);
 }
 
 export default function GlobalMap({ onOpenPaper }) {
@@ -174,6 +181,10 @@ export default function GlobalMap({ onOpenPaper }) {
   const [query, setQuery] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
   const [colorByTopic, setColorByTopic] = useState(false);
+  const [searchMode, setSearchMode] = useState('text'); // 'text' | 'semantic'
+  const [semanticThreshold, setSemanticThreshold] = useState(0.55);
+  const [semanticLimit, setSemanticLimit] = useState(SEARCH_HIT_LIMIT);
+  const [semanticState, setSemanticState] = useState({ status: 'idle', rows: [], entityHitCount: 0, paperHitCount: 0 });
   // グラフの再構築は毎回の入力・スライダー操作のたびに行わず、操作が止まってから行う。
   // 毎回作り直すとForceGraph2Dが完全新規データとして扱い、ノード位置がリセットされて
   // 画面がちらつく（エッジが点滅して見える）ため（検索ボックス・スライダー共通の対策）。
@@ -182,8 +193,28 @@ export default function GlobalMap({ onOpenPaper }) {
   const debouncedMinDegree = useDebouncedValue(minDegree, 300);
   const debouncedMaxNodes = useDebouncedValue(maxNodes, 300);
   const debouncedTopicFilter = useDebouncedValue(topicFilter, 300);
-  const isSearching = debouncedQuery.trim().length > 0;
-  const results = useMemo(() => (isSearching ? searchPapers(debouncedQuery, 12) : []), [isSearching, debouncedQuery]);
+  const isTextSearching = searchMode === 'text' && debouncedQuery.trim().length > 0;
+  const isSemanticSearching = searchMode === 'semantic' && semanticState.status === 'done' && semanticState.rows.length > 0;
+  const isSearching = isTextSearching || isSemanticSearching;
+  const results = useMemo(() => (isTextSearching ? searchPapers(debouncedQuery, 12) : []), [isTextSearching, debouncedQuery]);
+
+  const switchSearchMode = useCallback((next) => {
+    setSearchMode(next);
+    if (next === 'semantic') preloadSemanticSearch(BASE_URL);
+  }, []);
+
+  const runSemanticSearch = useCallback(async () => {
+    if (!query.trim()) return;
+    setSemanticState((s) => ({ ...s, status: 'loading' }));
+    try {
+      const { rows, entityHitCount, paperHitCount } = await semanticSearchPapers(
+        BASE_URL, query, { threshold: semanticThreshold, limit: semanticLimit },
+      );
+      setSemanticState({ status: 'done', rows, entityHitCount, paperHitCount });
+    } catch (err) {
+      setSemanticState({ status: 'error', rows: [], entityHitCount: 0, paperHitCount: 0, message: err.message });
+    }
+  }, [query, semanticThreshold, semanticLimit]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -194,12 +225,14 @@ export default function GlobalMap({ onOpenPaper }) {
     return () => ro.disconnect();
   }, []);
 
-  const data = useMemo(
-    () => (isSearching
-      ? buildSearchGraph(debouncedQuery, debouncedMaxNodes)
-      : filterGraph(debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter)),
-    [isSearching, debouncedQuery, debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter],
-  );
+  const data = useMemo(() => {
+    if (isTextSearching) return buildSearchGraph(debouncedQuery, debouncedMaxNodes);
+    if (isSemanticSearching) return buildSearchGraphFromUrls(semanticState.rows.map((r) => r.url), debouncedMaxNodes);
+    return filterGraph(debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter);
+  }, [
+    isTextSearching, isSemanticSearching, debouncedQuery, semanticState.rows,
+    debouncedActiveCategories, debouncedMinDegree, debouncedMaxNodes, showEntities, debouncedTopicFilter,
+  ]);
 
   // 選択中ノードに直接つながるノードだけの集合（他を減光するため）。データが変わったら選択解除。
   useEffect(() => { setSelectedId(null); setListPage(0); }, [data]);
@@ -365,10 +398,42 @@ export default function GlobalMap({ onOpenPaper }) {
         </div>
         <section className="control-section">
           <label htmlFor="map-search">論文を検索</label>
-          <div className="search-input-row">
-            <input id="map-search" className="search-input" placeholder="タイトル・要約のキーワード" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {isSearching && <button className="btn" onClick={() => setQuery('')}>✕</button>}
+          <div className="search-mode-tabs">
+            <button className={searchMode === 'text' ? 'active' : ''} onClick={() => switchSearchMode('text')}>タイトル・要約</button>
+            <button className={searchMode === 'semantic' ? 'active' : ''} onClick={() => switchSearchMode('semantic')}>意味検索</button>
           </div>
+          <div className="search-input-row">
+            <input
+              id="map-search"
+              className="search-input"
+              placeholder={searchMode === 'text' ? 'タイトル・要約のキーワード' : '例: diffusion model, crystal structure'}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (searchMode === 'semantic' && e.key === 'Enter') runSemanticSearch(); }}
+            />
+            {query.trim().length > 0 && (
+              <button className="btn" onClick={() => { setQuery(''); setSemanticState({ status: 'idle', rows: [], entityHitCount: 0, paperHitCount: 0 }); }}>✕</button>
+            )}
+          </div>
+
+          {searchMode === 'semantic' && (
+            <div className="semantic-controls">
+              <p className="control-note">
+                クエリと、論文タイトル/要約およびConcept/Method/Representationの名称をブラウザ内で埋め込みベクトル化し、コサイン類似度で検索します（初回は軽量モデル ~25MB を読み込みます）。
+              </p>
+              <label className="range-caption" htmlFor="map-sem-threshold">類似度閾値 <strong>{semanticThreshold.toFixed(2)}</strong></label>
+              <input id="map-sem-threshold" type="range" min="0.3" max="0.9" step="0.01" value={semanticThreshold}
+                onChange={(e) => setSemanticThreshold(Number(e.target.value))} />
+              <label className="range-caption" htmlFor="map-sem-limit">意味検索の候補数 <strong>{semanticLimit}</strong></label>
+              <input id="map-sem-limit" type="range" min="5" max="100" step="5" value={semanticLimit}
+                onChange={(e) => setSemanticLimit(Number(e.target.value))} />
+              <button className="btn search-run-btn" onClick={runSemanticSearch} disabled={!query.trim() || semanticState.status === 'loading'}>
+                {semanticState.status === 'loading' ? '検索中…' : '意味検索を実行'}
+              </button>
+              {semanticState.status === 'error' && <p className="control-note" style={{ color: '#9a3412' }}>読み込みに失敗しました: {semanticState.message}</p>}
+            </div>
+          )}
+
           {isSearching && (
             <>
               <p className="control-note">
@@ -381,15 +446,37 @@ export default function GlobalMap({ onOpenPaper }) {
                 <span><i style={{ borderColor: ENTITY_COLOR.representation }} />表現形式</span>
               </div>
               <div className="search-results" aria-live="polite">
-                {results.map(({ url, paper }) => (
+                {searchMode === 'text' && results.map(({ url, paper }) => (
                   <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
                     <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
                     <br />{paper.title}
                   </button>
                 ))}
-                {!results.length && <p>該当する論文がありません</p>}
+                {searchMode === 'semantic' && (
+                  <>
+                    <p className="control-note">
+                      類似Concept/Method/Representation {semanticState.entityHitCount}件・類似論文（タイトル/要約）{semanticState.paperHitCount}件がヒットしました。
+                    </p>
+                    {semanticState.rows.map(({ url, paper, match }) => (
+                      <button key={url} className="search-result" onClick={() => onOpenPaper(url)}>
+                        <span style={{ color: CATEGORY_TEXT_COLORS[paper.category] }}>{CATEGORIES[paper.category] ?? paper.category}</span>
+                        <br />{paper.title}
+                        <br />
+                        <small>
+                          {match.source === 'paper'
+                            ? `タイトル/要約が類似 · 類似度 ${match.similarity.toFixed(2)}`
+                            : `${ENTITY_LABELS[match.entityKind]}「${match.entityName}」 類似度 ${match.similarity.toFixed(2)}`}
+                        </small>
+                      </button>
+                    ))}
+                  </>
+                )}
+                {searchMode === 'text' && !results.length && <p>該当する論文がありません</p>}
               </div>
             </>
+          )}
+          {searchMode === 'semantic' && semanticState.status === 'done' && !semanticState.rows.length && (
+            <p className="control-note">該当する論文がありません（閾値を下げてみてください）</p>
           )}
         </section>
         {!isSearching && (

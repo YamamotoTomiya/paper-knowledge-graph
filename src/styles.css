@@ -343,6 +343,9 @@ input[type="range"] { width: 100%; }
 .stats-block { margin-bottom: 24px; max-width: 700px; }
 .stats-block-wide { max-width: 900px; }
 .stats-block h3 { font-size: 13px; color: var(--text-2); }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 8px 28px; margin-bottom: 24px; }
+.stats-grid .stats-block { max-width: none; margin-bottom: 8px; }
+.stats-grid .stats-block-wide { grid-column: 1 / -1; }
 .bar-list { display: flex; flex-direction: column; gap: 8px; }
 .bar-row { display: grid; grid-template-columns: 180px 1fr 60px; gap: 10px; align-items: center; font-size: 12px; }
 .bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -7,6 +7,7 @@
 // 同モデルのembedding（entity_search.bin, paper_search.bin）とコサイン類似度を取る。
 //
 // モデル（初回のみ ~25MB）・埋め込みデータはどちらも初回の意味検索実行まで取得しない（遅延ロード）。
+import { PAPERS, neighborsOf } from './graph.js';
 
 const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
 
@@ -96,4 +97,37 @@ export async function searchPapersBySimilarity(baseUrl, query, { threshold = 0.4
   }
   hits.sort((a, b) => b.similarity - a.similarity);
   return hits.slice(0, limit);
+}
+
+// 意味検索: (1) クエリに近いConcept/Method/Representationを探し、それらと繋がる論文
+// （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）と、
+// (2) クエリに近い論文タイトル・abstractそのもの、の両方を検索して類似度で1本にまとめる。
+// SearchSidebar（関係グラフ）・GlobalMap（全体マップ）の両方から使う共通ロジック。
+export async function semanticSearchPapers(baseUrl, query, { threshold, limit }) {
+  const [entityHits, paperHits] = await Promise.all([
+    searchEntitiesBySimilarity(baseUrl, query, { threshold, limit: 40 }),
+    searchPapersBySimilarity(baseUrl, query, { threshold, limit: 60 }),
+  ]);
+  const bestByPaper = new Map(); // url -> { similarity, source, entityName?, entityKind? }
+  for (const hit of entityHits) {
+    const neighbors = neighborsOf({ kind: hit.kind, key: hit.normalized_name });
+    for (const { other } of neighbors) {
+      if (other.kind !== 'paper') continue;
+      const prev = bestByPaper.get(other.key);
+      if (!prev || hit.similarity > prev.similarity) {
+        bestByPaper.set(other.key, { similarity: hit.similarity, source: 'entity', entityName: hit.name, entityKind: hit.kind });
+      }
+    }
+  }
+  for (const hit of paperHits) {
+    const prev = bestByPaper.get(hit.url);
+    if (!prev || hit.similarity > prev.similarity) {
+      bestByPaper.set(hit.url, { similarity: hit.similarity, source: 'paper' });
+    }
+  }
+  const rows = [...bestByPaper.entries()]
+    .map(([url, match]) => ({ url, paper: PAPERS[url], match }))
+    .filter((r) => r.paper)
+    .sort((a, b) => b.match.similarity - a.match.similarity || b.paper.score - a.paper.score);
+  return { rows: rows.slice(0, limit), entityHitCount: entityHits.length, paperHitCount: paperHits.length };
 }
