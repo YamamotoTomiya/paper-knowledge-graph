@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Background, Controls, MiniMap, ReactFlow } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { CATEGORY_TEXT_COLORS, PAPER_ENTRIES, STATS, nodeInfo, nodeKey } from './data/graph.js';
 import { buildEgoNetwork } from './flow/egoNetwork.js';
+import { useForceLayout } from './flow/useForceLayout.js';
 import { nodeTypes } from './flow/nodeTypes.jsx';
 import SearchSidebar from './components/SearchSidebar.jsx';
 import DetailPanel from './components/DetailPanel.jsx';
@@ -106,6 +107,19 @@ function GraphView({ centerRef, setCenterRef }) {
     [centerRef, maxNeighbors],
   );
 
+  // 全体マップと同じように、力学シミュレーション（反発・リンクの引き合い・衝突回避）で
+  // ノードが自然に動いて落ち着くようにする。buildEgoNetwork() のセクター配置は初期値として使う。
+  const forcePositions = useForceLayout(nodes, edges);
+
+  // ノードをドラッグした位置を記憶する（このstateが無いと、常にシミュレーション/セクター配置の
+  // 座標で上書きされてしまい、ドラッグしても手を離した瞬間に元の位置へ戻ってしまう）。
+  // 中心が変わったら（新しいエゴネットワークになるので）リセットする。
+  const [dragOverrides, setDragOverrides] = useState({});
+  useEffect(() => setDragOverrides({}), [nodes]);
+  const onNodeDragStop = useCallback((_, node) => {
+    setDragOverrides((prev) => ({ ...prev, [node.id]: node.position }));
+  }, []);
+
   // ホバー中のノードがあればそれを、無ければ「クリックして選んだノード」を強調対象にする。
   // これによりクリックした後マウスを離してもハイライトが残り、詳細パネルを読みながら
   // どのノードの繋がりか確認できる（ホバーだけだとマウスを動かすと消えてしまうため）。
@@ -122,10 +136,11 @@ function GraphView({ centerRef, setCenterRef }) {
     }
     return nodes.map((n) => ({
       ...n,
+      position: dragOverrides[n.id] ?? forcePositions[n.id] ?? n.position,
       measured: measured[n.id],
       data: { ...n.data, dimmed: highlightNodeId ? !connected.has(n.id) : false },
     }));
-  }, [nodes, edges, highlightNodeId, measured]);
+  }, [nodes, edges, highlightNodeId, measured, forcePositions, dragOverrides]);
 
   // 強調中ノードに繋がるエッジの本数（ラベルを出しても重ならないくらい少ないか判定するため）
   const hoverNodeEdgeCount = useMemo(
@@ -233,6 +248,7 @@ function GraphView({ centerRef, setCenterRef }) {
           edges={displayEdges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
+          onNodeDragStop={onNodeDragStop}
           onNodeClick={onNodeClick}
           onNodeDoubleClick={onNodeDoubleClick}
           onEdgeClick={onEdgeClick}
