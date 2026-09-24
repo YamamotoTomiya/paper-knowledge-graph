@@ -164,6 +164,7 @@ export default function GlobalMap({ onOpenPaper }) {
   const [showEntities, setShowEntities] = useState(true);
   const [showList, setShowList] = useState(true);
   const [listPage, setListPage] = useState(0);
+  const [listKindFilter, setListKindFilter] = useState('paper'); // 'paper' | 'concept' | 'method' | 'representation'
   const [query, setQuery] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
   const [colorByTopic, setColorByTopic] = useState(false);
@@ -222,17 +223,26 @@ export default function GlobalMap({ onOpenPaper }) {
 
   // 選択中ノードに直接つながるノードだけの集合（他を減光するため）。データが変わったら選択解除。
   useEffect(() => { setSelectedId(null); setListPage(0); }, [data]);
+  useEffect(() => { setListPage(0); }, [listKindFilter]);
 
-  // いま地図上に表示されている論文の一覧（右パネル用）。検索中は一致優先→スコア順、
-  // 通常時は類似論文数（degree）順（＝円の大きさの順）で並べる。
-  const paperList = useMemo(() => {
-    const papers = data.nodes.filter((n) => n.kind === 'paper');
-    return papers.sort((a, b) => (
-      isSearching ? (b.matched - a.matched) || (b.score - a.score) : b.degree - a.degree
+  // いま地図上に表示されているノードの種別ごとの件数（一覧パネルのタブに使う）。
+  const listKindCounts = useMemo(() => {
+    const counts = { paper: 0, concept: 0, method: 0, representation: 0 };
+    for (const n of data.nodes) counts[n.kind] = (counts[n.kind] ?? 0) + 1;
+    return counts;
+  }, [data]);
+
+  // いま地図上に表示されているノードのうち、選択中の種別（論文/コンセプト/手法/表現形式）
+  // だけの一覧（右パネル用）。検索中は一致優先→スコア順、通常時は接続数（degree、
+  // 論文なら類似論文数、Concept等なら扱う論文数。＝円や四角の大きさの順）で並べる。
+  const nodeList = useMemo(() => {
+    const items = data.nodes.filter((n) => n.kind === listKindFilter);
+    return items.sort((a, b) => (
+      isSearching ? (b.matched - a.matched) || ((b.score ?? 0) - (a.score ?? 0)) : b.degree - a.degree
     ));
-  }, [data, isSearching]);
-  const listPageCount = Math.max(1, Math.ceil(paperList.length / LIST_PAGE_SIZE));
-  const listPageItems = paperList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+  }, [data, isSearching, listKindFilter]);
+  const listPageCount = Math.max(1, Math.ceil(nodeList.length / LIST_PAGE_SIZE));
+  const listPageItems = nodeList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
   const connectedIds = useMemo(() => {
     if (!selectedId) return null;
     const set = new Set([selectedId]);
@@ -591,12 +601,24 @@ export default function GlobalMap({ onOpenPaper }) {
         )}
       </div>
       {showList && (
-        <aside className="map-list-panel" aria-label="表示中の論文一覧">
+        <aside className="map-list-panel" aria-label="表示中の一覧">
           <div className="map-list-header">
             <h3>表示中の一覧</h3>
-            <span className="table-count">{paperList.length.toLocaleString()} 件</span>
+            <span className="table-count">{nodeList.length.toLocaleString()} 件</span>
           </div>
-          <p className="control-note">クリックでマップ上のその論文を選択・拡大します。</p>
+          <div className="list-kind-tabs">
+            {[['paper', '論文'], ['concept', ENTITY_LABELS.concept], ['method', ENTITY_LABELS.method], ['representation', ENTITY_LABELS.representation]].map(([kind, label]) => (
+              <button
+                key={kind}
+                className={listKindFilter === kind ? 'active' : ''}
+                disabled={!listKindCounts[kind]}
+                onClick={() => setListKindFilter(kind)}
+              >
+                {label} ({listKindCounts[kind].toLocaleString()})
+              </button>
+            ))}
+          </div>
+          <p className="control-note">クリックでマップ上のそのノードを選択・拡大します。</p>
           <div className="map-list-items">
             {listPageItems.map((p) => (
               <button
@@ -604,23 +626,35 @@ export default function GlobalMap({ onOpenPaper }) {
                 className={`map-list-row${p.id === selectedId ? ' active' : ''}`}
                 onClick={() => onListItemSelect(p)}
               >
-                <span className="paper-row-cat" style={{ color: CATEGORY_TEXT_COLORS[p.category] }}>
-                  {CATEGORIES[p.category] ?? p.category}
-                </span>
-                <span className="map-list-title">{p.title}</span>
-                <span className="map-list-meta">score {p.score} · 類似論文{p.degree}件</span>
+                {p.kind === 'paper' ? (
+                  <>
+                    <span className="paper-row-cat" style={{ color: CATEGORY_TEXT_COLORS[p.category] }}>
+                      {CATEGORIES[p.category] ?? p.category}
+                    </span>
+                    <span className="map-list-title">{p.title}</span>
+                    <span className="map-list-meta">score {p.score} · 類似論文{p.degree}件</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="paper-row-cat" style={{ color: ENTITY_COLOR[p.kind] }}>
+                      {ENTITY_LABELS[p.kind] ?? p.kind}
+                    </span>
+                    <span className="map-list-title">{p.title}</span>
+                    <span className="map-list-meta">{p.degree}件の論文と接続</span>
+                  </>
+                )}
                 <span
                   role="button"
                   tabIndex={0}
                   className="link-cell map-list-open"
-                  onClick={(e) => { e.stopPropagation(); onOpenPaper(p.id); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onOpenPaper(p.id); } }}
+                  onClick={(e) => { e.stopPropagation(); onOpenPaper(p.kind === 'paper' ? p.id : p.ref); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onOpenPaper(p.kind === 'paper' ? p.id : p.ref); } }}
                 >
                   関係グラフを開く ↗
                 </span>
               </button>
             ))}
-            {!listPageItems.length && <p className="detail-empty">表示中の論文がありません</p>}
+            {!listPageItems.length && <p className="detail-empty">表示中の{listKindFilter === 'paper' ? '論文' : ENTITY_LABELS[listKindFilter]}がありません</p>}
           </div>
           <div className="table-pagination">
             <button disabled={listPage === 0} onClick={() => setListPage((p) => p - 1)}>← 前へ</button>
