@@ -2,10 +2,6 @@ import React from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { CATEGORY_TEXT_COLORS, ENTITY_LABELS } from '../data/graph.js';
 
-const dot = (color) => (
-  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: color, marginRight: 6 }} />
-);
-
 function BaseNode({ children, style, dimmed }) {
   return (
     <div
@@ -41,24 +37,31 @@ function CenterNode({ data }) {
   );
 }
 
+// 全体マップの論文ノードと同じ「円だけ」の見た目にする（カード表示だとタイトルが密集して
+// 読みにくいため）。タイトルはホバー時にだけ吹き出しで表示する。
 function PaperNode({ data }) {
   const color = CATEGORY_TEXT_COLORS[data.category] ?? '#0369a1';
+  const size = data.indirect ? 9 : 15;
   return (
-    <BaseNode
-      style={{
-        border: data.indirect ? `1px dashed ${color}` : `1px solid ${color}`,
-        maxWidth: data.indirect ? 180 : 220,
-        opacity: data.indirect ? 0.85 : 1,
-      }}
-      dimmed={data.dimmed}
-    >
-      {data.indirect && (
-        <div style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', marginBottom: 2 }}>類似論文の類似論文</div>
-      )}
-      {dot(color)}
-      {data.label}
-      {data.score != null && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>score {data.score}</div>}
-    </BaseNode>
+    <div className="paper-dot-wrap" style={{ opacity: data.dimmed ? 0.15 : 1 }}>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <div
+        className="paper-dot"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          background: data.indirect ? 'transparent' : '#fff',
+          border: `${data.indirect ? 1 : 2}px ${data.indirect ? 'dashed' : 'solid'} ${color}`,
+        }}
+      />
+      <div className="paper-dot-label">
+        {data.indirect && <div className="paper-dot-label-tag">類似論文の類似論文</div>}
+        {data.label}
+        {data.score != null && <span className="paper-dot-label-score"> score {data.score}</span>}
+      </div>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+    </div>
   );
 }
 

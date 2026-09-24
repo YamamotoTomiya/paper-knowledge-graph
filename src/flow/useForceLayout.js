@@ -20,16 +20,19 @@ export function useForceLayout(nodes, edges) {
       return undefined;
     }
 
-    const simNodes = nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, isCenter: n.type === 'center' }));
+    const simNodes = nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, isCenter: n.type === 'center', isPaper: n.type === 'paper' }));
     for (const n of simNodes) {
       if (n.isCenter) { n.fx = 0; n.fy = 0; }
     }
     const simLinks = edges.map((e) => ({ source: e.source, target: e.target }));
 
+    // 論文ノードは円だけの小さい見た目になったので、カード表示のConcept/Method/
+    // Representationノードほど間隔を広げる必要はない（衝突半径を小さくする）。
+    const collideRadius = (d) => (d.isCenter ? 90 : d.isPaper ? 24 : 60);
     const sim = forceSimulation(simNodes)
       .force('charge', forceManyBody().strength(-320))
       .force('link', forceLink(simLinks).id((d) => d.id).distance(150).strength(0.55))
-      .force('collide', forceCollide((d) => (d.isCenter ? 90 : 60)))
+      .force('collide', forceCollide(collideRadius))
       .force('center', forceCenter(0, 0).strength(0.02))
       .stop();
 
