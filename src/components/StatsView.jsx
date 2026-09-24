@@ -1,15 +1,9 @@
 import React, { useMemo } from 'react';
 import {
-  CATEGORIES, CATEGORY_TEXT_COLORS, META, PAPER_GLOBAL_GRAPH, RELATION_TYPE_JA, SLACK_STATUS_JA,
-  STATS, TOPICS,
+  CATEGORIES, CATEGORY_TEXT_COLORS, META, PAPER_GLOBAL_GRAPH, RELATION_TYPE_COLOR, RELATION_TYPE_JA,
+  SLACK_STATUS_JA, STATS, TOPICS,
 } from '../data/graph.js';
 
-const RELATION_TYPE_COLOR = {
-  SIMILAR_TO: '#0369a1',
-  DISCUSSES: '#166534',
-  USES_METHOD: '#9a3412',
-  USES_REPRESENTATION: '#6d28d9',
-};
 const SLACK_STATUS_COLOR = { posted: '#166534', not_attempted: '#94a3b8', webhook_not_set: '#9a3412' };
 
 // 汎用の横棒グラフ。items=[key, value]の配列（呼び出し側で並び順を決める）。

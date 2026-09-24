@@ -20,6 +20,14 @@ export const META = {
 
 export const ENTITY_LABELS = { concept: 'コンセプト', method: '手法', representation: '表現形式' };
 export const ENTITIES_BY_KIND = { concept: CONCEPTS, method: METHODS, representation: REPRESENTATIONS };
+export const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
+
+export const RELATION_TYPE_COLOR = {
+  SIMILAR_TO: '#0369a1',
+  DISCUSSES: '#166534',
+  USES_METHOD: '#9a3412',
+  USES_REPRESENTATION: '#6d28d9',
+};
 
 export const RELATION_TYPE_JA = {
   SIMILAR_TO: '類似論文',

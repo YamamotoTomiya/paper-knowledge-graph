@@ -1,46 +1,16 @@
 // 選択ノード（論文 または Concept/Method/Representation）のエゴネットワークを
-// React Flowのnodes/edgesに変換する。中心が論文の場合は、1ホップ（類似論文 +
-// Concept/Method/Representation）に加えて、直接の類似論文がさらに持つ類似論文
-// （2ホップ、間接）も少数取り込む。中心1本だけの「星型」だと対象論文にしか繋がりが
-// 見えず他の論文同士の繋がりが分からないため（見にくい・他の論文が見えない、という
-// フィードバックを踏まえた変更）、間接ノードはその親（直接の隣接論文）に繋げて描画する。
-// 中心がConcept/Method/Representationの場合は、それを扱う論文だけを1ホップで表示する
-// （間接展開は論文間の類似度に特有の考え方なので中心が論文の時のみ行う）。
-// 種別ごとにセクターへ分け、リング状に配置する
-// （JP_Market_Vis の src/flow/egoNetwork.js のセクター配置を簡略化したもの）。
+// react-force-graph-2d用の{nodes, links}に変換する。中心が論文の場合は、1ホップ
+// （類似論文 + Concept/Method/Representation）に加えて、直接の類似論文がさらに持つ
+// 類似論文（2ホップ、間接）も少数取り込む。中心1本だけの「星型」だと対象論文にしか
+// 繋がりが見えず他の論文同士の繋がりが分からないため（見にくい・他の論文が見えない、
+// というフィードバックを踏まえた変更）、間接ノードはその親（直接の隣接論文）に繋げて
+// 描画する。中心がConcept/Method/Representationの場合は、それを扱う論文だけを
+// 1ホップで表示する（間接展開は論文間の類似度に特有の考え方なので中心が論文の時のみ行う）。
+// 実際のレイアウト（座標）は力学シミュレーション（ForceGraph2D内蔵）に任せる。
 import { RELATION_TYPE_JA, degreeOf, neighborsOf, nodeInfo, nodeKey, nodeName } from '../data/graph.js';
 
 const GROUP_ORDER = ['SIMILAR_TO', 'DISCUSSES', 'USES_METHOD', 'USES_REPRESENTATION'];
-const GROUP_COLOR = {
-  SIMILAR_TO: '#0369a1',
-  DISCUSSES: '#166534',
-  USES_METHOD: '#9a3412',
-  USES_REPRESENTATION: '#6d28d9',
-};
-
-const BASE_RADIUS = 260;
-const RING_GAP = 150;
-const NODE_ARC = 130;
-const SECTOR_GAP = 0.14;
 const INDIRECT_PER_PARENT = 5;
-
-function layoutSector(members, angleStart, span, positions) {
-  let placed = 0;
-  let ring = 0;
-  while (placed < members.length) {
-    const radius = BASE_RADIUS + ring * RING_GAP;
-    const arc = span * radius;
-    const capacity = Math.max(1, Math.floor(arc / NODE_ARC));
-    const countThisRing = Math.min(capacity, members.length - placed);
-    for (let j = 0; j < countThisRing; j += 1) {
-      const frac = countThisRing === 1 ? 0.5 : j / (countThisRing - 1);
-      const a = angleStart + span * (0.08 + 0.84 * frac);
-      positions.set(members[placed + j].key, { x: Math.cos(a) * radius, y: Math.sin(a) * radius });
-    }
-    placed += countThisRing;
-    ring += 1;
-  }
-}
 
 // 直接の類似論文それぞれについて、そのさらに類似論文（中心や既存の隣接ノードと重複しないもの）を
 // 少数だけ拾う。関係グラフ上では「親（直接隣接論文）」に繋げて表示する間接ノードとして返す。
@@ -70,15 +40,15 @@ function collectIndirectPapers(centerKey, directPapers, existingKeys, maxIndirec
 }
 
 // centerRef: {kind:'paper', key:url} または {kind:'concept'|'method'|'representation', key:normalized_name}
-export function buildEgoNetwork(centerRef, { maxNeighbors = 100 } = {}) {
+export function buildEgoGraph(centerRef, { maxNeighbors = 100 } = {}) {
   const center = nodeInfo(centerRef);
-  if (!center) return { nodes: [], edges: [], truncated: 0 };
+  if (!center) return { nodes: [], links: [], truncated: 0 };
   const centerKey = nodeKey(centerRef);
   const isPaperCenter = centerRef.kind === 'paper';
 
-  const links = neighborsOf(centerRef);
+  const rels = neighborsOf(centerRef);
   const neighborMap = new Map();
-  for (const l of links) {
+  for (const l of rels) {
     const k = nodeKey(l.other);
     if (!neighborMap.has(k)) neighborMap.set(k, { key: k, ref: l.other, relations: [] });
     neighborMap.get(k).relations.push(l.relation);
@@ -124,88 +94,59 @@ export function buildEgoNetwork(centerRef, { maxNeighbors = 100 } = {}) {
     neighbors = kept;
   }
 
-  const groups = [];
-  for (const type of GROUP_ORDER) {
-    const members = neighbors.filter((nb) => nb.primaryType === type);
-    if (members.length) groups.push({ type, members });
-  }
-
-  const n = neighbors.length || 1;
-  const positions = new Map();
-  const usable = 2 * Math.PI - SECTOR_GAP * groups.length;
-  let angle = -Math.PI / 2;
-  for (const g of groups) {
-    const span = Math.max(0.2, usable * (g.members.length / n));
-    layoutSector(g.members, angle, span, positions);
-    angle += span + SECTOR_GAP;
-  }
+  // 中心は原点に固定する（fx/fy）。力学シミュレーションが原点を中心に周囲へ広がる。
+  const centerNode = {
+    id: centerKey,
+    kind: centerRef.kind,
+    isCenter: true,
+    label: isPaperCenter ? center.title : center.name,
+    score: isPaperCenter ? center.score : null,
+    category: isPaperCenter ? center.category : null,
+    ref: centerRef,
+    fx: 0,
+    fy: 0,
+  };
 
   const nodes = [
-    {
-      id: centerKey,
-      type: 'center',
-      position: { x: 0, y: 0 },
-      data: {
-        label: isPaperCenter ? center.title : center.name,
-        kind: centerRef.kind,
-        score: isPaperCenter ? center.score : null,
-        category: isPaperCenter ? center.category : null,
-        ref: centerRef,
-      },
-    },
+    centerNode,
     ...neighbors.map((nb) => {
       const info = nodeInfo(nb.ref);
       return {
         id: nb.key,
-        type: nb.ref.kind === 'paper' ? 'paper' : 'entity',
-        position: positions.get(nb.key) ?? { x: 0, y: 0 },
-        data: {
-          label: nodeName(nb.ref),
-          kind: nb.ref.kind,
-          score: nb.ref.kind === 'paper' ? info?.score : null,
-          category: nb.ref.kind === 'paper' ? info?.category : null,
-          degree: degreeOf(nb.ref),
-          indirect: !!nb.indirect,
-          ref: nb.ref,
-        },
+        kind: nb.ref.kind,
+        isCenter: false,
+        label: nodeName(nb.ref),
+        score: nb.ref.kind === 'paper' ? info?.score : null,
+        category: nb.ref.kind === 'paper' ? info?.category : null,
+        degree: degreeOf(nb.ref),
+        indirect: !!nb.indirect,
+        ref: nb.ref,
       };
     }),
   ];
 
   // 間接ノードの親は直接隣接論文（visibleKeysに含まれる）、直接ノードの相手は中心。
-  // どちらもallVisibleに含まれる関係だけをエッジとして描く。
+  // どちらもallVisibleに含まれる関係だけをリンクとして描く。
   const visibleKeys = new Set(neighbors.map((nb) => nb.key));
   const allVisible = new Set([...visibleKeys, centerKey]);
-  const edges = [];
+  const links = [];
   for (const nb of neighbors) {
     for (const rel of nb.relations) {
       const sKey = nodeKey(rel.source);
       const tKey = nodeKey(rel.target);
       if (!allVisible.has(sKey) || !allVisible.has(tKey)) continue;
-      const color = GROUP_COLOR[rel.type] ?? '#64748b';
-      const scoreVal = rel.score ?? rel.confidence;
-      edges.push({
+      links.push({
         id: rel.id,
         source: sKey,
         target: tKey,
-        type: 'default',
-        // ラベル（種別・スコア）は常時表示せず、ホバー時だけ付与する（App.jsx側で制御）。
-        // 常時表示すると隣接数の多い論文で線とラベルが重なり合って読めなくなるため。
-        label: '',
-        labelStyle: { fill: '#0f172a', fontSize: 10, fontWeight: 600 },
-        labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
-        labelBgPadding: [3, 2],
-        labelBgBorderRadius: 3,
-        style: {
-          stroke: color,
-          strokeWidth: nb.indirect ? 1 : 1.5,
-          opacity: nb.indirect ? 0.45 : 0.85,
-          strokeDasharray: nb.indirect ? '4 3' : undefined,
-        },
-        data: { relation: rel, typeJa: RELATION_TYPE_JA[rel.type] ?? rel.type, scoreVal, indirect: !!nb.indirect },
+        type: rel.type,
+        typeJa: RELATION_TYPE_JA[rel.type] ?? rel.type,
+        scoreVal: rel.score ?? rel.confidence,
+        indirect: !!nb.indirect,
+        relation: rel,
       });
     }
   }
 
-  return { nodes, edges, truncated };
+  return { nodes, links, truncated };
 }

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import {
-  CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH, TOPICS, TOPIC_COLORS,
-  neighborsOf, nodeKey, nodeName, searchPapers,
+  CATEGORIES, CATEGORY_TEXT_COLORS, ENTITY_COLOR, ENTITY_LABELS, PAPERS, PAPER_GLOBAL_GRAPH, TOPICS,
+  TOPIC_COLORS, neighborsOf, nodeKey, nodeName, searchPapers,
 } from '../data/graph.js';
 import { preloadSemanticSearch, semanticSearchPapers } from '../data/semanticSearch.js';
+import { drawHoverLabel } from '../flow/canvasLabel.js';
 
 const BASE_URL = import.meta.env?.BASE_URL ?? '/';
 
@@ -17,7 +18,6 @@ const DEFAULT_ENTITY_BUDGET = 250;
 const SEARCH_HIT_LIMIT = 25;
 const SEARCH_CONTEXT_PER_HIT = 5;
 const SEARCH_ENTITIES_PER_HIT = 6;
-const ENTITY_COLOR = { concept: '#166534', method: '#9a3412', representation: '#6d28d9' };
 const LIST_PAGE_SIZE = 50;
 const TOPIC_LIST = Object.entries(TOPICS)
   .map(([id, t]) => ({ id, ...t }))
@@ -30,20 +30,6 @@ function useDebouncedValue(value, delay) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
-}
-
-// ノード上部にホバー時のラベル（白背景付き）を描く共通処理。offsetY=ノード上端からの距離
-function drawHoverLabel(ctx, node, offsetY, scale, text) {
-  ctx.font = `600 ${12 / scale}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  const label = text.length > 60 ? `${text.slice(0, 60)}…` : text;
-  const y = node.y - offsetY;
-  const w = ctx.measureText(label).width + 8 / scale;
-  ctx.fillStyle = 'rgba(255,255,255,.92)';
-  ctx.fillRect(node.x - w / 2, y - 12 / scale, w, 14 / scale);
-  ctx.fillStyle = '#0f172a';
-  ctx.fillText(label, node.x, y);
 }
 
 // 表示中の論文集合に対して、それらが扱うConcept/Method/Representationのうち
