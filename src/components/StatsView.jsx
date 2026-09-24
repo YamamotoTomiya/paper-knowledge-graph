@@ -30,7 +30,7 @@ export default function StatsView({ onOpenPaper }) {
     [],
   );
   // 類似論文数（SIMILAR_TO）が多い、いわゆるハブ論文のランキング（JP_Market_Vis の
-  // 「ハブ企業ランキング」と同じ考え方）。クリックでその論文を中心に関係グラフを開く。
+  // 「ハブ企業ランキング」と同じ考え方）。クリックでその論文を中心に局所マップを開く。
   const hubPapers = useMemo(
     () => [...PAPER_GLOBAL_GRAPH.nodes].sort((a, b) => b.degree - a.degree).slice(0, 20),
     [],

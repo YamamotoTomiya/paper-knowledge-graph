@@ -1,5 +1,5 @@
 // ノード上部にホバー時のラベル（白背景付き）を描く共通処理。offsetY=ノード上端からの距離。
-// 全体マップ（GlobalMap）・関係グラフ（EgoGraph）のどちらのcanvas描画からも使う。
+// 全体マップ（GlobalMap）・局所マップ（EgoGraph）のどちらのcanvas描画からも使う。
 export function drawHoverLabel(ctx, node, offsetY, scale, text) {
   ctx.font = `600 ${12 / scale}px sans-serif`;
   ctx.textAlign = 'center';

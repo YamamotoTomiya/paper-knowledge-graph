@@ -345,7 +345,7 @@ export default function GlobalMap({ onOpenPaper }) {
 
   // シングルクリック=つながっているノードだけ強調表示（選択のトグル）。
   // ダブルクリック（同じノードを400ms以内に再クリック）=そのノード（論文でもConcept/Method/
-  // Representationでも）を中心に関係グラフを開く。
+  // Representationでも）を中心に局所マップを開く。
   const onNodeClick = useCallback((node) => {
     const now = Date.now();
     const isDoubleClick = lastClickRef.current.id === node.id && now - lastClickRef.current.time < 400;
@@ -378,7 +378,7 @@ export default function GlobalMap({ onOpenPaper }) {
             {showList ? '一覧を隠す' : '一覧を表示'}
           </button>
         </div>
-        <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。クリックでつながっているノードだけ強調表示、ダブルクリックでその論文を中心に関係グラフを開きます。</p>
+        <p>円1つ=論文1本（白い円の縁の色=カテゴリ、大きさ=類似論文の本数）、四角=Concept/Method/Representation。クリックでつながっているノードだけ強調表示、ダブルクリックでその論文を中心に局所マップを開きます。</p>
         {selectedId && (
           <p className="control-note">
             選択中: {data.nodes.find((n) => n.id === selectedId)?.title ?? selectedId}
@@ -434,7 +434,7 @@ export default function GlobalMap({ onOpenPaper }) {
             <>
               <p className="control-note">
                 濃い円=一致した論文（{data.hitCount ?? 0}件）、薄い円=それらの類似論文（文脈として表示）、
-                四角=一致論文が扱うConcept/Method/Representation。クリックで関係グラフを開きます。
+                四角=一致論文が扱うConcept/Method/Representation。クリックで局所マップを開きます。
               </p>
               <div className="legend">
                 <span><i style={{ borderColor: ENTITY_COLOR.concept }} />コンセプト</span>
@@ -650,7 +650,7 @@ export default function GlobalMap({ onOpenPaper }) {
                   onClick={(e) => { e.stopPropagation(); onOpenPaper(p.kind === 'paper' ? p.id : p.ref); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onOpenPaper(p.kind === 'paper' ? p.id : p.ref); } }}
                 >
-                  関係グラフを開く ↗
+                  局所マップを開く ↗
                 </span>
               </button>
             ))}

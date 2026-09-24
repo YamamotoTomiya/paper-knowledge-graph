@@ -98,7 +98,7 @@ export const PAPER_ENTRIES = Object.entries(PAPERS).map(([url, p]) => ({ url, ..
 
 // 論文レベルの全体マップ用グラフ（JP_Market_Vis の GLOBAL_GRAPH と同じ考え方: 同種ノード同士
 // ＝論文同士のSIMILAR_TOだけで構成し、ノードの大きさ＝そのpaperのSIMILAR_TO本数(degree)）。
-// Concept/Method/Representationとの関係は関係グラフ（エゴネットワーク）側で見せるため含めない。
+// Concept/Method/Representationとの関係は局所マップ（エゴネットワーク）側で見せるため含めない。
 export const PAPER_GLOBAL_GRAPH = (() => {
   const degree = new Map();
   const links = [];

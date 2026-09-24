@@ -7,11 +7,13 @@ import {
 import { buildEgoGraph } from '../flow/egoNetwork.js';
 import { drawHoverLabel } from '../flow/canvasLabel.js';
 
-// 全体マップ（GlobalMap）と同じcanvas1枚の力学グラフとして関係グラフ（エゴネットワーク）を
+// 全体マップ（GlobalMap）と同じcanvas1枚の力学グラフとして局所マップ（エゴネットワーク）を
 // 描く。以前はReact Flow（DOM/SVG）で描いていたが、ノード・エッジがDOM要素になる分
 // 全体マップより動きが重く見える問題があったため、全体マップと同じreact-force-graph-2d
 // （canvas描画・軽量）に統一した。
 const HOVER_LABEL_MAX_EDGES = 8;
+const LIST_PAGE_SIZE = 50;
+const KIND_TABS = [['paper', '論文'], ['concept', ENTITY_LABELS.concept], ['method', ENTITY_LABELS.method], ['representation', ENTITY_LABELS.representation]];
 
 function kindLabelOf(node) {
   if (node.kind === 'paper') return 'この論文';
@@ -45,6 +47,7 @@ function nodeLabelText(node) {
 
 export default function EgoGraph({
   centerRef, maxNeighbors, selectedNodeId, onNodeClick, onNodeDoubleClick, onEdgeClick, onBackgroundClick, overlays,
+  showList,
 }) {
   const fgRef = useRef(null);
   const wrapRef = useRef(null);
@@ -52,6 +55,8 @@ export default function EgoGraph({
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [hoverNode, setHoverNode] = useState(null);
   const lastClickRef = useRef({ id: null, time: 0 });
+  const [listKindFilter, setListKindFilter] = useState('paper');
+  const [listPage, setListPage] = useState(0);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -66,6 +71,23 @@ export default function EgoGraph({
     () => buildEgoGraph(centerRef, { maxNeighbors }),
     [centerRef, maxNeighbors],
   );
+
+  useEffect(() => setListPage(0), [data, listKindFilter]);
+
+  // 全体マップの「表示中の一覧」と同じく、いま局所マップに表示されているノードを
+  // 種別（論文/コンセプト/手法/表現形式）ごとに絞り込んで見られるようにする。
+  const listKindCounts = useMemo(() => {
+    const counts = { paper: 0, concept: 0, method: 0, representation: 0 };
+    for (const n of data.nodes) counts[n.kind] = (counts[n.kind] ?? 0) + 1;
+    return counts;
+  }, [data]);
+
+  const nodeList = useMemo(() => {
+    const items = data.nodes.filter((n) => n.kind === listKindFilter);
+    return items.sort((a, b) => (b.isCenter - a.isCenter) || (b.degree ?? 0) - (a.degree ?? 0));
+  }, [data, listKindFilter]);
+  const listPageCount = Math.max(1, Math.ceil(nodeList.length / LIST_PAGE_SIZE));
+  const listPageItems = nodeList.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
 
   // ホバー中のノードがあればそれを、無ければ「クリックして選んだノード」を強調対象にする。
   // これによりクリックした後マウスを離してもハイライトが残り、詳細パネルを読みながら
@@ -201,7 +223,19 @@ export default function EgoGraph({
 
   const handleLinkClick = useCallback((l) => onEdgeClick(l.relation), [onEdgeClick]);
 
+  // 一覧の行クリック = そのノードを選択（詳細表示・つながりの強調）しつつ、
+  // canvas上でもそのノードへ視点を移動する（全体マップの一覧と同じ操作感）。
+  const onListItemSelect = useCallback((node) => {
+    onNodeClick(node.ref);
+    const fg = fgRef.current;
+    if (fg && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      fg.centerAt(node.x, node.y, 400);
+      fg.zoom(3, 400);
+    }
+  }, [onNodeClick]);
+
   return (
+    <>
     <div ref={wrapRef} className="ego-canvas">
       {overlays}
       <ForceGraph2D
@@ -250,5 +284,75 @@ export default function EgoGraph({
         </div>
       )}
     </div>
+    {showList && (
+      <aside className="map-list-panel" aria-label="表示中の一覧">
+        <div className="map-list-header">
+          <h3>表示中の一覧</h3>
+          <span className="table-count">{nodeList.length.toLocaleString()} 件</span>
+        </div>
+        <div className="list-kind-tabs">
+          {KIND_TABS.map(([kind, label]) => (
+            <button
+              key={kind}
+              className={listKindFilter === kind ? 'active' : ''}
+              disabled={!listKindCounts[kind]}
+              onClick={() => setListKindFilter(kind)}
+            >
+              {label} ({listKindCounts[kind].toLocaleString()})
+            </button>
+          ))}
+        </div>
+        <p className="control-note">クリックでこの局所マップ上のそのノードを選択・拡大します。</p>
+        <div className="map-list-items">
+          {listPageItems.map((n) => (
+            <button
+              key={n.id}
+              className={`map-list-row${n.id === selectedNodeId ? ' active' : ''}${n.isCenter ? ' is-center' : ''}`}
+              onClick={() => onListItemSelect(n)}
+            >
+              {n.kind === 'paper' ? (
+                <>
+                  <span className="paper-row-cat" style={{ color: CATEGORY_TEXT_COLORS[n.category] }}>
+                    {CATEGORIES[n.category] ?? n.category}{n.isCenter && ' · 中心'}
+                  </span>
+                  <span className="map-list-title">{n.label}</span>
+                  <span className="map-list-meta">
+                    {n.score != null && `score ${n.score} · `}類似論文{n.degree}件{n.indirect && ' · 類似論文の類似論文'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="paper-row-cat" style={{ color: ENTITY_COLOR[n.kind] }}>
+                    {ENTITY_LABELS[n.kind] ?? n.kind}{n.isCenter && ' · 中心'}
+                  </span>
+                  <span className="map-list-title">{n.label}</span>
+                  <span className="map-list-meta">{n.degree}件の論文と接続</span>
+                </>
+              )}
+              {!n.isCenter && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="link-cell map-list-open"
+                  onClick={(e) => { e.stopPropagation(); onNodeDoubleClick(n.ref); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onNodeDoubleClick(n.ref); } }}
+                >
+                  中心にする ↗
+                </span>
+              )}
+            </button>
+          ))}
+          {!listPageItems.length && (
+            <p className="detail-empty">表示中の{listKindFilter === 'paper' ? '論文' : ENTITY_LABELS[listKindFilter]}がありません</p>
+          )}
+        </div>
+        <div className="table-pagination">
+          <button disabled={listPage === 0} onClick={() => setListPage((p) => p - 1)}>← 前へ</button>
+          <span>{listPage + 1} / {listPageCount}</span>
+          <button disabled={listPage >= listPageCount - 1} onClick={() => setListPage((p) => p + 1)}>次へ →</button>
+        </div>
+      </aside>
+    )}
+    </>
   );
 }

@@ -29,7 +29,7 @@ function Header({ view, setView }) {
         </div>
       </div>
       <nav aria-label="表示切り替え" className="view-tabs">
-        {Object.entries({ map: '全体マップ', graph: '関係グラフ', table: '論文一覧', relations: '関係一覧', stats: '統計' }).map(([key, label]) => (
+        {Object.entries({ map: '全体マップ', graph: '局所マップ', table: '論文一覧', relations: '関係一覧', stats: '統計' }).map(([key, label]) => (
           <button
             key={key}
             aria-current={view === key ? 'page' : undefined}
@@ -79,12 +79,13 @@ function GraphView({ centerRef, setCenterRef }) {
   const [selection, setSelection] = useState(null);
   const [history, setHistory] = useState([]);
   const [maxNeighbors, setMaxNeighbors] = useState(DEFAULT_MAX_NEIGHBORS);
+  const [showList, setShowList] = useState(true);
 
   const centerKey = nodeKey(centerRef);
   const selectedNodeId = selection?.kind === 'node' ? nodeKey(selection.ref) : null;
 
   // クリック = 詳細表示（中心ノードも含め、表示中のどの論文/エンティティでも共通）。
-  // 中心を切り替える「関係グラフを開く」操作はダブルクリック、または詳細パネルの
+  // 中心を切り替える「局所マップを開く」操作はダブルクリック、または詳細パネルの
   // ボタンから明示的に行う（クリックしただけで中心が変わると誤操作しやすいため）。
   const onNodeClick = useCallback((ref) => {
     setSelection({ kind: 'node', ref, info: nodeInfo(ref) });
@@ -131,6 +132,7 @@ function GraphView({ centerRef, setCenterRef }) {
         onNodeDoubleClick={recenterOn}
         onEdgeClick={onEdgeClick}
         onBackgroundClick={() => setSelection(null)}
+        showList={showList}
         overlays={(
           <>
             <div className="overlay-stack overlay-stack-left">
@@ -144,6 +146,9 @@ function GraphView({ centerRef, setCenterRef }) {
               <label className="range-caption" htmlFor="max-neighbors">可視化候補数 <strong>{maxNeighbors}</strong></label>
               <input id="max-neighbors" type="range" min="20" max="400" step="10" value={maxNeighbors}
                 onChange={(e) => setMaxNeighbors(Number(e.target.value))} />
+              <button className="btn list-toggle-btn" onClick={() => setShowList((v) => !v)}>
+                {showList ? '一覧を隠す' : '一覧を表示'}
+              </button>
             </div>
           </>
         )}

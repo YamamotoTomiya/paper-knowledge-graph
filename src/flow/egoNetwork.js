@@ -13,7 +13,7 @@ const GROUP_ORDER = ['SIMILAR_TO', 'DISCUSSES', 'USES_METHOD', 'USES_REPRESENTAT
 const INDIRECT_PER_PARENT = 5;
 
 // 直接の類似論文それぞれについて、そのさらに類似論文（中心や既存の隣接ノードと重複しないもの）を
-// 少数だけ拾う。関係グラフ上では「親（直接隣接論文）」に繋げて表示する間接ノードとして返す。
+// 少数だけ拾う。局所マップ上では「親（直接隣接論文）」に繋げて表示する間接ノードとして返す。
 function collectIndirectPapers(centerKey, directPapers, existingKeys, maxIndirect) {
   const indirect = new Map(); // key -> { key, ref, relations:[relation], primaryType, indirect, parentKey }
   for (const parent of directPapers) {
@@ -102,6 +102,7 @@ export function buildEgoGraph(centerRef, { maxNeighbors = 100 } = {}) {
     label: isPaperCenter ? center.title : center.name,
     score: isPaperCenter ? center.score : null,
     category: isPaperCenter ? center.category : null,
+    degree: degreeOf(centerRef),
     ref: centerRef,
     fx: 0,
     fy: 0,

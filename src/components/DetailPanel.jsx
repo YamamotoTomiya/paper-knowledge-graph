@@ -33,7 +33,7 @@ function PaperDetail({ url, paper, isCenter, onCenterNode }) {
       <div className="detail-actions">
         <a className="btn" href={url} target="_blank" rel="noreferrer">論文を開く ↗</a>
         {!isCenter && onCenterNode && (
-          <button className="btn" onClick={() => onCenterNode({ kind: 'paper', key: url })}>この論文を中心に表示</button>
+          <button className="btn" onClick={() => onCenterNode({ kind: 'paper', key: url })}>この論文を中心に局所マップを表示</button>
         )}
       </div>
     </>
@@ -57,7 +57,7 @@ function EntityDetail({ kind, name, entity, isCenter, onCenterNode }) {
       {!isCenter && onCenterNode && (
         <div className="detail-actions">
           <button className="btn" onClick={() => onCenterNode({ kind, key: name })}>
-            この{ENTITY_LABELS[kind] ?? kind}を中心に関係グラフを表示
+            この{ENTITY_LABELS[kind] ?? kind}を中心に局所マップを表示
           </button>
         </div>
       )}

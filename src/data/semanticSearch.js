@@ -102,7 +102,7 @@ export async function searchPapersBySimilarity(baseUrl, query, { threshold = 0.4
 // 意味検索: (1) クエリに近いConcept/Method/Representationを探し、それらと繋がる論文
 // （graph_app.py の「意味的に近いConcept/Method/Representationも含める」検索と同じ考え方）と、
 // (2) クエリに近い論文タイトル・abstractそのもの、の両方を検索して類似度で1本にまとめる。
-// SearchSidebar（関係グラフ）・GlobalMap（全体マップ）の両方から使う共通ロジック。
+// SearchSidebar（局所マップ）・GlobalMap（全体マップ）の両方から使う共通ロジック。
 export async function semanticSearchPapers(baseUrl, query, { threshold, limit }) {
   const [entityHits, paperHits] = await Promise.all([
     searchEntitiesBySimilarity(baseUrl, query, { threshold, limit: 40 }),
